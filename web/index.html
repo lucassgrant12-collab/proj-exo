@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atlas</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="crypto-warning" class="crypto-warning" hidden>
+  This browser cannot run the encryption Atlas needs (Web Crypto is unavailable, usually because the page isn't served over HTTPS or localhost). Data will be stored on this device without encryption.
+</div>
+
+<div id="onboarding" class="onboarding">
+  <div class="wrap onboarding-top">
+    <span class="wordmark">ATLAS</span>
+    <div class="progress">
+      <span class="progress-label">STEP <span id="step-current">1</span> OF 4</span>
+      <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:25%"></div></div>
+    </div>
+  </div>
+
+  <div class="wrap onboarding-body">
+
+    <div class="step is-active" data-step="1">
+      <p class="eyebrow">A financial identity protocol</p>
+      <h1>Identity comes first.</h1>
+      <p class="lede">Atlas has no accounts. No email, no password, no bank profile. Generate a cryptographic identity that belongs to no institution, then attach a bank, wallet, or card to it as an attestation.</p>
+
+      <div class="identity-choice" id="identity-choice">
+        <button id="choice-new" type="button">Create a new identity</button>
+        <button class="secondary" id="choice-existing" type="button">I already have one</button>
+      </div>
+
+      <div class="recovery-panel" id="recovery-panel" hidden>
+        <p class="hint">Enter your 5 recovery keys. These were generated once, in Settings, when recovery was enabled for this identity.</p>
+        <div class="recovery-keys-input-grid">
+          <div class="field"><label for="recover-key-1">Key 1</label><input type="text" id="recover-key-1"></div>
+          <div class="field"><label for="recover-key-2">Key 2</label><input type="text" id="recover-key-2"></div>
+          <div class="field"><label for="recover-key-3">Key 3</label><input type="text" id="recover-key-3"></div>
+          <div class="field"><label for="recover-key-4">Key 4</label><input type="text" id="recover-key-4"></div>
+          <div class="field"><label for="recover-key-5">Key 5</label><input type="text" id="recover-key-5"></div>
+        </div>
+        <p class="hint">If recovery was never enabled, there are no keys and this identity cannot be restored. That is by design.</p>
+        <p class="form-error" id="recover-error" hidden></p>
+        <div class="recovery-actions">
+          <button class="secondary" id="recover-back" type="button">Back</button>
+          <button type="button" id="recover-submit">Recover identity</button>
+        </div>
+
+        <div class="panel-frame" id="recover-panel-frame" hidden>
+          <div class="panel-chrome"><span>ATLAS · RECOVERY SESSION</span><span class="dots"><span></span><span></span><span></span></span></div>
+          <div class="panel-body">
+            <div class="log" id="recover-log"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step" data-step="2">
+      <p class="eyebrow">Step 2</p>
+      <h2>Generate your identity</h2>
+      <p>This runs entirely in your browser. Nothing is transmitted or stored anywhere else.</p>
+
+      <div class="panel-frame">
+        <div class="panel-chrome"><span>ATLAS · LOCAL SESSION</span><span class="dots"><span></span><span></span><span></span></span></div>
+        <div class="panel-body">
+          <div id="gen-idle" class="state-center">
+            <p>No identity found on this device.</p>
+          </div>
+          <div id="gen-log" class="log"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step" data-step="3">
+      <p class="eyebrow">Step 3</p>
+      <h2>Your identity.</h2>
+      <p>Permanent, non-sequential, independent of any bank, blockchain, or jurisdiction.</p>
+      <div class="identity-card">
+        <div>
+          <p class="identity-id-label">Atlas identity</p>
+          <div class="identity-id" id="identity-id">-</div>
+        </div>
+        <details class="tech">
+          <summary>Technical details</summary>
+          <div class="tech-row"><span class="k">Key type</span><span class="v">Ed25519</span></div>
+          <div class="tech-row"><span class="k">Derivation</span><span class="v">Local, on-device</span></div>
+          <div class="tech-row"><span class="k">Custody</span><span class="v">Self-held</span></div>
+          <div class="fingerprint" id="fingerprint">-</div>
+        </details>
+      </div>
+    </div>
+
+    <div class="step" data-step="4">
+      <p class="eyebrow">Step 4</p>
+      <h2>Connect a source</h2>
+      <p>Optional. Banks, wallets, and cards attach beneath your identity as attestations. Skip this and add one later from your dashboard if you'd rather.</p>
+      <div class="connect-actions">
+        <button class="secondary" id="connect-bank" type="button">Connect a bank</button>
+        <button class="secondary" id="connect-wallet" type="button">Connect a wallet</button>
+        <button class="secondary" id="connect-card" type="button">Connect a card</button>
+        <button class="secondary" id="trust-btn-ob" type="button">Trust?</button>
+      </div>
+
+      <div id="ob-connect-form" class="connect-form" hidden>
+        <div class="field" id="ob-field-bank-name" hidden>
+          <label for="ob-input-bank-name">Bank name</label>
+          <input type="text" id="ob-input-bank-name" placeholder="e.g. Monzo">
+        </div>
+        <div class="field" id="ob-field-bank-balance" hidden>
+          <label for="ob-input-bank-balance">Balance (GBP)</label>
+          <input type="number" id="ob-input-bank-balance" min="0" step="1" placeholder="1000">
+        </div>
+        <div class="field" id="ob-field-wallet" hidden>
+          <label for="ob-input-wallet">Wallet address</label>
+          <input type="text" id="ob-input-wallet" placeholder="0x...">
+        </div>
+        <div class="field" id="ob-field-card" hidden>
+          <label for="ob-input-card">Card label</label>
+          <input type="text" id="ob-input-card" placeholder="Visa •••• 4471">
+        </div>
+        <p class="hint">By adding this source, you authorize Atlas to move funds from it using the permission-scoped methods described under Trust. This records your consent at this moment. It does not remove any fraud protections you're entitled to if this source is ever used without your authorization.</p>
+        <p class="form-error" id="ob-connect-error" hidden></p>
+        <div class="recovery-actions">
+          <button class="secondary" id="ob-connect-cancel" type="button">Cancel</button>
+          <button id="ob-connect-add" type="button">Add source</button>
+        </div>
+      </div>
+
+      <ul class="sources" id="ob-sources-list"></ul>
+    </div>
+
+  </div>
+
+  <div class="wrap onboarding-nav">
+    <button class="secondary" id="ob-back" type="button" hidden>Back</button>
+    <button id="ob-next" type="button">Begin</button>
+  </div>
+</div>
+
+<div id="app" class="app-shell" hidden>
+  <aside class="sidebar">
+    <div class="sidebar-top">
+      <span class="wordmark">ATLAS</span>
+    </div>
+    <nav class="sidebar-nav">
+      <button class="nav-btn is-active" data-tab="identity" type="button">Identity</button>
+      <button class="nav-btn" data-tab="convert" type="button">Convert</button>
+      <button class="nav-btn" data-tab="settings" type="button">Settings</button>
+    </nav>
+    <div class="sidebar-foot">
+      <span class="id" id="sidebar-id">-</span>
+      <button class="reset-link" id="reset-demo" type="button">Reset demo</button>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <section class="tab-panel is-active" data-tab="identity">
+      <p class="eyebrow">Your Atlas identity</p>
+      <h2 id="main-identity-id">-</h2>
+      <details class="tech">
+        <summary>Technical details</summary>
+        <div class="tech-row"><span class="k">Key type</span><span class="v">Ed25519</span></div>
+        <div class="tech-row"><span class="k">Derivation</span><span class="v">Local, on-device</span></div>
+        <div class="tech-row"><span class="k">Custody</span><span class="v">Self-held</span></div>
+        <div class="fingerprint" id="main-fingerprint">-</div>
+      </details>
+
+      <div class="stat-row">
+        <div class="stat"><span class="label">Total value</span><span class="value" id="stat-total">£0.00</span></div>
+        <div class="stat"><span class="label">Connected sources</span><span class="value" id="stat-sources">0</span></div>
+        <div class="stat"><span class="label">Holdings</span><span class="value" id="stat-holdings">0</span></div>
+      </div>
+
+      <p class="sources-label">Sources</p>
+      <ul class="sources" id="main-sources-list"></ul>
+      <p class="hint" id="sources-empty">Nothing connected yet.</p>
+      <div class="connect-actions">
+        <button class="secondary" id="connect-bank-2" type="button">Connect a bank</button>
+        <button class="secondary" id="connect-wallet-2" type="button">Connect a wallet</button>
+        <button class="secondary" id="connect-card-2" type="button">Connect a card</button>
+        <button class="secondary" id="trust-btn-app" type="button">Trust?</button>
+      </div>
+
+      <div id="main-connect-form" class="connect-form" hidden>
+        <div class="field" id="main-field-bank-name" hidden>
+          <label for="main-input-bank-name">Bank name</label>
+          <input type="text" id="main-input-bank-name" placeholder="e.g. Monzo">
+        </div>
+        <div class="field" id="main-field-bank-balance" hidden>
+          <label for="main-input-bank-balance">Balance (GBP)</label>
+          <input type="number" id="main-input-bank-balance" min="0" step="1" placeholder="1000">
+        </div>
+        <div class="field" id="main-field-wallet" hidden>
+          <label for="main-input-wallet">Wallet address</label>
+          <input type="text" id="main-input-wallet" placeholder="0x...">
+        </div>
+        <div class="field" id="main-field-card" hidden>
+          <label for="main-input-card">Card label</label>
+          <input type="text" id="main-input-card" placeholder="Visa •••• 4471">
+        </div>
+        <p class="hint">By adding this source, you authorize Atlas to move funds from it using the permission-scoped methods described under Trust. This records your consent at this moment. It does not remove any fraud protections you're entitled to if this source is ever used without your authorization.</p>
+        <p class="form-error" id="main-connect-error" hidden></p>
+        <div class="recovery-actions">
+          <button class="secondary" id="main-connect-cancel" type="button">Cancel</button>
+          <button id="main-connect-add" type="button">Add source</button>
+        </div>
+      </div>
+
+      <p class="sources-label">Holdings</p>
+      <ul class="sources" id="holdings-list"></ul>
+      <p class="hint" id="holdings-empty">Nothing yet. Convert a bank balance to hold a position.</p>
+
+      <p class="sources-label">Recent activity</p>
+      <ul class="activity-list" id="activity-list"></ul>
+      <p class="hint" id="activity-empty">Nothing yet.</p>
+    </section>
+
+    <section class="tab-panel" data-tab="convert">
+      <p class="eyebrow">Instant conversion</p>
+      <h2>Convert a bank balance into a position.</h2>
+      <p>Atlas negotiates the settlement route automatically. Rates shown are simulated.</p>
+
+      <div id="convert-empty" class="empty-state" hidden>
+        <p>Connect a bank first to convert a balance.</p>
+        <button type="button" id="convert-connect-bank">Connect a bank</button>
+      </div>
+
+      <form id="convert-form">
+        <div class="convert-grid">
+          <div class="field">
+            <label for="convert-from">From</label>
+            <select id="convert-from"></select>
+          </div>
+          <span class="convert-arrow" aria-hidden="true">→</span>
+          <div class="field">
+            <label for="convert-to">To</label>
+            <select id="convert-to">
+              <option value="BTC">Bitcoin (BTC)</option>
+              <option value="ETH">Ethereum (ETH)</option>
+              <option value="USDC">USD Coin (USDC)</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="convert-amount">Amount (GBP)</label>
+          <input type="number" id="convert-amount" min="1" step="1" placeholder="100">
+        </div>
+        <p class="estimate" id="convert-estimate">Enter an amount to see the estimate.</p>
+        <p class="form-error" id="convert-error" hidden></p>
+        <button type="submit" id="convert-submit">Convert instantly</button>
+      </form>
+
+      <div class="panel-frame" id="convert-panel" hidden>
+        <div class="panel-chrome"><span>ATLAS · SETTLEMENT ENGINE</span><span class="dots"><span></span><span></span><span></span></span></div>
+        <div class="panel-body">
+          <div class="log" id="convert-log"></div>
+          <div class="state-center" id="convert-success" hidden>
+            <p id="convert-success-text">-</p>
+            <button class="secondary" id="convert-again" type="button">Convert again</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" data-tab="settings">
+      <p class="eyebrow">Settings</p>
+      <h2>Recovery</h2>
+      <p>Off by default. If you never enable recovery, nothing exists that can restore a lost identity, and nothing can be asked of you to prove it's yours.</p>
+      <p>Enabling it generates 5 recovery keys, once. Those keys become the only way back into this identity. This can be turned on. It can never be turned off.</p>
+
+      <div class="recovery-toggle-row">
+        <span class="recovery-status" id="recovery-status">Recovery is off</span>
+        <button id="recovery-enable-btn" type="button">Enable recovery</button>
+      </div>
+
+      <div id="recovery-confirm" class="recovery-confirm" hidden>
+        <p><strong>Are you sure?</strong> This generates 5 recovery keys for this identity. Once enabled, recovery can never be turned off.</p>
+        <div class="recovery-actions">
+          <button class="secondary" id="recovery-confirm-cancel" type="button">Cancel</button>
+          <button id="recovery-confirm-yes" type="button">Yes, enable recovery</button>
+        </div>
+      </div>
+
+      <div id="recovery-keys-block" class="recovery-keys-block" hidden>
+        <p class="sources-label">Your recovery keys</p>
+        <p class="hint">Keep these somewhere only you control. Anyone who holds all 5 can recover this identity.</p>
+        <div class="recovery-keys-grid" id="recovery-keys-grid"></div>
+      </div>
+    </section>
+
+    <footer class="app-footer">
+      <div class="footer-row">
+        <span class="footer-note">ATLAS · 99% ANONYMOUS</span>
+        <button class="footer-link" id="footer-anonymity-link" type="button">Anonymity →</button>
+      </div>
+    </footer>
+
+  </main>
+</div>
+
+<div id="trust-view" class="trust-view" hidden>
+  <div class="wrap trust-top">
+    <span class="wordmark">ATLAS</span>
+    <button class="secondary" id="trust-back" type="button">Back</button>
+  </div>
+  <div class="wrap trust-body">
+    <p class="eyebrow">Security</p>
+    <h1>Nothing can be stolen because nothing exists to steal.</h1>
+    <p class="lede">When you connect a bank, wallet, or card, Atlas never stores the account number, the sort code, or a copy of your credentials. The connection is compressed into a single cryptographic attestation, bound permanently to your identity's keypair.</p>
+
+    <ul class="trust-list">
+      <li><span class="row-tag">01</span><span>Your identity is a keypair you generate and hold. Atlas never sees the private key.</span></li>
+      <li><span class="row-tag">02</span><span>Each source you connect becomes a signed attestation, not a stored copy of your credentials.</span></li>
+      <li><span class="row-tag">03</span><span>Every attestation can be revoked instantly and independently, without touching the others.</span></li>
+      <li><span class="row-tag">04</span><span>Everything stored on this device, identity, sources, activity, is encrypted with AES-256-GCM under a key generated and held on this device. No password to create or remember, and nothing sits on disk as plain, readable text.</span></li>
+    </ul>
+
+    <p>There is no central account database to breach and no password to phish, because neither exists inside the protocol. There is only a signed proof: verifiable by anyone, forgeable by no one.</p>
+
+    <p class="trust-more"><button class="footer-link" id="trust-anonymity-link" type="button">Anonymity →</button></p>
+  </div>
+</div>
+
+<div id="anonymity-view" class="trust-view" hidden>
+  <div class="wrap trust-top">
+    <span class="wordmark">ATLAS</span>
+    <button class="secondary" id="anonymity-back" type="button">Back</button>
+  </div>
+  <div class="wrap trust-body">
+    <p class="eyebrow">Anonymity</p>
+    <h1>99% anonymous. Building toward the rest.</h1>
+    <p class="lede">Your Atlas identity is a keypair, not a name. Nothing about who you are is required to generate one or hold value in it.</p>
+
+    <div class="stat-big">
+      <span class="stat-big-value">99%</span>
+      <span class="stat-big-label">Anonymous today</span>
+    </div>
+
+    <p class="sources-label">Already anonymous</p>
+    <ul class="trust-list">
+      <li><span>No name, email, or address is required to generate an identity.</span></li>
+      <li><span>No central account database links your identity to a person.</span></li>
+      <li><span>An attestation reveals only what a connected source itself requires, never more.</span></li>
+      <li><span>Recovery is off unless you turn it on yourself, in Settings.</span></li>
+    </ul>
+
+    <p class="sources-label">The last 1%</p>
+    <p>A few things currently keep this under 100%.</p>
+
+    <p><strong>Optional recovery.</strong> Off by default. If you enable it, 5 recovery keys are generated on your device, once, and they become the only way back into that identity. Choosing this trades a sliver of the purest anonymous state, one with no recovery path at all, for the ability to get back in if you lose access. It can be turned on. It can never be turned off.</p>
+
+    <p><strong>Hosting infrastructure.</strong> Running a service on the internet means a request still has to reach a server somewhere, and that layer sees the same ordinary connection data any web host sees. It never sees what happens after: every identity, source, and activity record is AES-256-GCM encrypted before it ever touches storage, under a key generated and held on your device alone. It's never transmitted anywhere, so nothing outside this device, including us, can decrypt what's stored here.</p>
+
+    <p><strong>Local device access.</strong> The encryption key lives on your device so there's no password to create or remember. That protects your data if it's ever copied or intercepted somewhere else, but not from someone holding this device itself, open and unlocked. No app can fix that. Securing the device is on you.</p>
+
+    <p>We are working toward being the first 100% anonymous financial system: no optional trade-off left to make, and nothing seen at the infrastructure layer beyond the bare minimum a connection requires.</p>
+  </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>

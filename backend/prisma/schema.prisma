@@ -1,0 +1,290 @@
+// Atlas core schema.
+//
+// The design choice this file exists to make concrete: balances are never
+// stored as a single mutable number anywhere. Every movement of value is a
+// LedgerTransaction made of LedgerEntries that must sum to zero per asset.
+// A user's "balance" is always a derived sum over their LedgerAccount's
+// entries, never a field that gets directly incremented/decremented. This
+// is what makes it correct to run pooled custody underneath (one omnibus
+// wallet per asset at a real custody/liquidity provider) while still being
+// able to prove, at any time, exactly whose claim is whose — the pooling
+// happens at the custody layer, never at the accounting layer.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model Identity {
+  id                   String   @id @default(cuid())
+  displayId            String   @unique // the human-shown "ATLAS 4471 8823 ..." form
+  // Raw Ed25519 public key, base64-encoded. This is the actual cryptographic
+  // root of the identity — every authenticated API request is a signature
+  // verified against this key. See src/domain/auth.ts.
+  publicKey            String   @unique
+  // A short, deterministic, display-only hash of publicKey (see
+  // domain/identity.ts) — never used for verification itself, only shown to
+  // the user under "Technical details," matching the prototype.
+  publicKeyFingerprint String   @unique
+  createdAt            DateTime @default(now())
+
+  fundingSources  FundingSource[]
+  permissionGrants PermissionGrant[]
+
+  @@map("identities")
+}
+
+// ---------------------------------------------------------------------------
+// Funding sources and permissions
+// ---------------------------------------------------------------------------
+
+enum FundingSourceKind {
+  BANK
+  CARD
+  WALLET
+}
+
+// How a charge/transfer against this source is actually initiated. This is
+// the field that encodes the §10 distinction: PISP-style bank rails never
+// make Atlas the merchant of record; CARD_NETWORK rails structurally do,
+// no matter how the product describes the relationship to the user.
+enum FundingRail {
+  PISP          // Open Banking payment initiation — Atlas never holds funds
+  CARD_NETWORK  // Visa/Mastercard — Atlas (or its processor) is merchant of record
+  ONCHAIN       // external wallet, attested only, not a spend funding source
+}
+
+enum FundingSourceStatus {
+  ACTIVE
+  REVOKED
+}
+
+model FundingSource {
+  id         String              @id @default(cuid())
+  identityId String
+  identity   Identity            @relation(fields: [identityId], references: [id])
+
+  kind       FundingSourceKind
+  rail       FundingRail
+  label      String              // non-sensitive display label only, e.g. "Monzo ..1234"
+  externalRef String             // opaque reference at the real provider — never a raw PAN/account number
+  status     FundingSourceStatus @default(ACTIVE)
+  createdAt  DateTime            @default(now())
+
+  permissionGrants PermissionGrant[]
+
+  @@index([identityId])
+  @@map("funding_sources")
+}
+
+enum PermissionGrantStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+model PermissionGrant {
+  id              String   @id @default(cuid())
+  identityId      String
+  identity        Identity @relation(fields: [identityId], references: [id])
+  fundingSourceId String
+  fundingSource   FundingSource @relation(fields: [fundingSourceId], references: [id])
+
+  limitMinor      BigInt   // scoped ceiling, in the limit asset's minor units
+  limitAsset      String   // e.g. "GBP"
+  windowSeconds   Int      // velocity window this limit applies over
+  singleUse       Boolean  @default(false)
+  merchantCategory String?
+  expiresAt       DateTime?
+  status          PermissionGrantStatus @default(ACTIVE)
+  createdAt       DateTime @default(now())
+
+  settlementRecords     SettlementRecord[]
+  spendTokenIssuances   SpendTokenIssuance[]
+
+  @@index([identityId])
+  @@index([fundingSourceId])
+  @@map("permission_grants")
+}
+
+// ---------------------------------------------------------------------------
+// Spend tokens — real RSA blind signatures (src/domain/blindSignature.ts)
+// ---------------------------------------------------------------------------
+//
+// This is deliberately split into two tables that share no foreign key
+// with each other, which is the actual point: SpendTokenIssuance records
+// that *a* token was issued against a grant (needed for velocity/allowance
+// checks), but never the token's value. RedeemedSpendToken records that a
+// specific token value was spent (needed to stop double-spending), but has
+// no reference back to any grant or identity. Nothing in this schema is
+// capable of joining the two — that's what makes "Atlas can't correlate a
+// spend to the grant that funded it" a property of the data model itself,
+// not just something the application code chooses not to do.
+
+enum SpendTokenForm {
+  VIRTUAL_CARD
+  CRYPTO_ADDRESS
+}
+
+// The RSA keypair used to blind-sign tokens. Only n/e (public) are safe to
+// hand to a client for blinding/verification; d (private) lives only in
+// the signing service's memory for now — see blindSignature.ts and the
+// README's honest note on key custody in a real deployment (KMS, not this).
+model IssuerKey {
+  id         String   @id @default(cuid())
+  modulusN   String   // base64url big-endian, JWK-style
+  exponentE  String
+  createdAt  DateTime @default(now())
+  active     Boolean  @default(true)
+
+  @@map("issuer_keys")
+}
+
+// One row per issuance request — allowance/velocity bookkeeping only. This
+// is the one point in the whole flow where a token request is still linked
+// to a grant, which is exactly why the allowance check happens here, at
+// issuance, and not at redemption (see RedeemedSpendToken below).
+model SpendTokenIssuance {
+  id          String   @id @default(cuid())
+  grantId     String
+  grant       PermissionGrant @relation(fields: [grantId], references: [id])
+  form        SpendTokenForm
+  amountMinor BigInt
+  amountAsset String
+  issuedAt    DateTime @default(now())
+
+  @@index([grantId])
+  @@map("spend_token_issuances")
+}
+
+// One row per *redeemed* token — double-spend prevention only. tokenHash is
+// a hash of the unblinded message; there is intentionally no grantId or
+// identityId column here.
+model RedeemedSpendToken {
+  tokenHash   String   @id
+  redeemedAt  DateTime @default(now())
+  amountMinor BigInt
+  amountAsset String
+
+  @@map("redeemed_spend_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Assets and the double-entry ledger
+// ---------------------------------------------------------------------------
+
+enum AssetKind {
+  FIAT
+  CRYPTO
+}
+
+model Asset {
+  code     String    @id // "GBP", "BTC", "USDC", ...
+  decimals Int       // minor-unit scale, e.g. GBP=2, BTC=8, USDC=6
+  kind     AssetKind
+
+  ledgerAccounts LedgerAccount[]
+
+  @@map("assets")
+}
+
+// Who/what an account belongs to. IDENTITY accounts are the only ones a
+// user's app-visible balance is ever computed from. The others are the
+// system's own boundary and internal accounts — see money.ts / ledger.ts
+// for exactly how a transaction must balance across these.
+enum LedgerAccountOwnerType {
+  IDENTITY           // a specific user's claim on an asset
+  ATLAS_OPERATING     // Atlas's own fiat operating cash
+  ATLAS_CUSTODY_POOL  // the mirror of what Atlas should hold at its custody/liquidity provider
+  EXTERNAL_FUNDING    // system boundary: the card network / bank rail, outside Atlas
+  EXTERNAL_LIQUIDITY  // system boundary: the crypto exchange / liquidity partner, outside Atlas
+}
+
+model LedgerAccount {
+  id         String   @id @default(cuid())
+  ownerType  LedgerAccountOwnerType
+  ownerId    String?  // Identity.id when ownerType = IDENTITY, null otherwise
+  assetCode  String
+  asset      Asset    @relation(fields: [assetCode], references: [code])
+  createdAt  DateTime @default(now())
+
+  entries LedgerEntry[]
+
+  @@unique([ownerType, ownerId, assetCode])
+  @@map("ledger_accounts")
+}
+
+enum LedgerTransactionKind {
+  FUNDING_RECEIVED     // Transaction A from §10 — card/bank charge lands
+  LIQUIDITY_PURCHASE   // Atlas buys crypto from a liquidity partner
+  POSITION_ALLOCATION  // custody pool -> a specific identity's position
+  MERCHANT_SPEND       // SpendToken used at a merchant (Transaction B)
+  CHARGEBACK_REVERSAL  // a funding charge gets clawed back
+  HOLD_UNWIND          // a held position gets reversed before release
+  WITHDRAWAL           // identity moves a position out of Atlas
+}
+
+model LedgerTransaction {
+  id                 String   @id @default(cuid())
+  kind               LedgerTransactionKind
+  memo               String
+  settlementRecordId String?
+  settlementRecord   SettlementRecord? @relation(fields: [settlementRecordId], references: [id])
+  createdAt          DateTime @default(now())
+
+  entries LedgerEntry[]
+
+  @@map("ledger_transactions")
+}
+
+model LedgerEntry {
+  id            String   @id @default(cuid())
+  transactionId String
+  transaction   LedgerTransaction @relation(fields: [transactionId], references: [id])
+  accountId     String
+  account       LedgerAccount     @relation(fields: [accountId], references: [id])
+  amountMinor   BigInt   // signed; all entries for one (transaction, asset) pair must sum to zero
+  createdAt     DateTime @default(now())
+
+  @@index([transactionId])
+  @@index([accountId])
+  @@map("ledger_entries")
+}
+
+// ---------------------------------------------------------------------------
+// Settlement records — the §10 "buy-then-hold" state machine
+// ---------------------------------------------------------------------------
+
+enum SettlementStatus {
+  PENDING   // funding charge initiated, not yet confirmed
+  HELD      // value delivered/allocated, but locked pending confidence window
+  RELEASED  // hold window passed clean; user can withdraw/spend the position
+  REVERSED  // funding charge was disputed/failed; position was unwound
+}
+
+model SettlementRecord {
+  id               String   @id @default(cuid())
+  grantId          String
+  grant            PermissionGrant @relation(fields: [grantId], references: [id])
+
+  fundingChargeRef String   // opaque reference to the real processor charge
+  amountMinor      BigInt   // requested amount, in the grant's limit asset — denormalized
+  amountAsset      String   // onto the record so velocity checks don't need to replay ledger entries
+  status           SettlementStatus @default(PENDING)
+  heldUntil        DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  ledgerTransactions LedgerTransaction[]
+
+  @@index([grantId])
+  @@map("settlement_records")
+}

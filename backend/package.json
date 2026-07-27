@@ -1,0 +1,35 @@
+{
+  "name": "atlas-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Atlas core backend: identity, permission grants, spend tokens, double-entry ledger, settlement orchestration. See README.md for what's real logic vs. adapter stubs awaiting real provider integration.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch --env-file=.env src/api/server.ts",
+    "start": "node --env-file=.env dist/api/server.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke": "tsx --env-file=.env scripts/smoke.ts",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.20.0",
+    "fastify": "^4.28.1",
+    "stripe": "^16.12.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "prisma": "^5.20.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
