@@ -5,9 +5,9 @@
   "type": "module",
   "description": "Atlas core backend: identity, permission grants, spend tokens, double-entry ledger, settlement orchestration. See README.md for what's real logic vs. adapter stubs awaiting real provider integration.",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "prisma generate && tsc -p tsconfig.json",
     "dev": "tsx watch --env-file=.env src/api/server.ts",
-    "start": "node --env-file=.env dist/api/server.js",
+    "start": "node dist/src/api/server.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",

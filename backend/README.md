@@ -218,6 +218,33 @@ in `.env` — see `.env.example`. Without it, card funding automatically uses
 the in-memory stub, so the rest of the system stays runnable with zero
 external accounts.
 
+### Deploying on Railway
+
+This repo is a monorepo (`backend/`, `docs/`, `web/` all sit at the root),
+and Railway's build system looks at the repo root by default — it won't
+find a buildable app there and will fail with "could not determine how to
+build the app." Fix this once, in the Railway dashboard, per service:
+
+**Settings → Source → Root Directory → set it to `backend`.**
+
+`railway.json` in this folder then takes over from there (`npm ci && npm run
+build` to build, `npm start` to run) — nothing else to configure for the
+build itself. What Railway *doesn't* provide automatically is `.env` — it
+injects environment variables directly into the process instead of writing
+a file to disk, which is also why `npm start` deliberately doesn't use
+Node's `--env-file` flag (that flag throws if the file doesn't exist, and
+in a deployed container it won't). Set the real values under the service's
+**Variables** tab instead, matching what's in `.env.example`:
+`DATABASE_URL`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`. `PORT` doesn't
+need setting — Railway injects its own and `server.ts` already reads
+`process.env.PORT`.
+
+Database migrations aren't run automatically on deploy — run
+`npm run db:migrate` from your own machine against the same `DATABASE_URL`
+(or run the SQL files directly in Supabase's SQL editor, per above) before
+or after deploying; either order is fine since the API only starts serving
+traffic once it's already running.
+
 ### Adding to the schema over time
 
 This is a real migration history, not a one-off file — the same pattern
