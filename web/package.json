@@ -1,0 +1,13 @@
+{
+  "name": "atlas-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Atlas prototype frontend — static HTML/CSS/JS, served by server.js. Not yet connected to backend/ — see its README.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
