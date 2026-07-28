@@ -35,7 +35,15 @@ export class FundingSourceService {
     });
   }
 
-  async revoke(fundingSourceId: string) {
+  async listForIdentity(identityId: string) {
+    return this.db.fundingSource.findMany({ where: { identityId }, orderBy: { createdAt: "asc" } });
+  }
+
+  async revoke(fundingSourceId: string, requestingIdentityId: string) {
+    const source = await this.db.fundingSource.findUniqueOrThrow({ where: { id: fundingSourceId } });
+    if (source.identityId !== requestingIdentityId) {
+      throw new Error(`Funding source ${fundingSourceId} does not belong to the requesting identity.`);
+    }
     return this.db.fundingSource.update({ where: { id: fundingSourceId }, data: { status: "REVOKED" } });
   }
 
@@ -82,7 +90,11 @@ export class FundingSourceService {
     });
   }
 
-  async revokeGrant(grantId: string) {
+  async revokeGrant(grantId: string, requestingIdentityId: string) {
+    const grant = await this.db.permissionGrant.findUniqueOrThrow({ where: { id: grantId } });
+    if (grant.identityId !== requestingIdentityId) {
+      throw new Error(`Permission grant ${grantId} does not belong to the requesting identity.`);
+    }
     return this.db.permissionGrant.update({ where: { id: grantId }, data: { status: "REVOKED" } });
   }
 }

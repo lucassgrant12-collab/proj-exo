@@ -150,7 +150,7 @@ async function main() {
   });
   console.log(`Second purchase: ${purchase2.cryptoAllocated.toString()} allocated, HELD`);
 
-  await settlement.releaseHold(purchase2.settlementRecordId);
+  await settlement.releaseHold(purchase2.settlementRecordId, identity.id);
   console.log(`Hold released — position is now withdrawable.`);
 
   const withdrawal = await withdrawals.withdraw({

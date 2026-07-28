@@ -122,7 +122,7 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
   outline-offset: 3px;
 }
 
-input[type="number"], input[type="text"], select {
+input[type="number"], input[type="text"], select, textarea {
   font-family: var(--font-mono);
   font-size: 0.9375rem;
   padding: 0.65em 0.75em;
@@ -132,7 +132,12 @@ input[type="number"], input[type="text"], select {
   color: var(--text);
   width: 100%;
 }
-input:focus, select:focus {
+textarea {
+  font-size: 0.75rem;
+  resize: vertical;
+  line-height: 1.5;
+}
+input:focus, select:focus, textarea:focus {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
   border-color: var(--border-strong);
@@ -291,7 +296,7 @@ p.lede {
 
 .recovery-keys-input-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
   gap: 0.75rem;
   margin: 1.25rem 0;
 }
@@ -435,6 +440,7 @@ p.lede {
   .log .line { transition: none; }
 }
 .log .line::before { content: "> "; color: var(--text-tertiary); }
+.log .line-error { color: var(--text); }
 
 .identity-card {
   display: flex;
@@ -628,6 +634,17 @@ button.reset-link:hover { color: var(--text); }
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.currency-select {
+  width: auto;
+  padding: 0.1em 0.4em;
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 .stat .value {
   font-family: var(--font-mono);
@@ -693,6 +710,22 @@ ul.sources li, ul.activity-list li {
   flex: none;
   font-variant-numeric: tabular-nums;
   text-transform: uppercase;
+}
+
+.row-revoke {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-tertiary);
+  font-size: 0.6875rem;
+  padding: 0.3em 0.6em;
+  text-transform: uppercase;
+}
+.row-revoke:hover { color: var(--text); border-color: var(--border-strong); }
+.row-revoked {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
 }
 
 .activity-list li { font-family: var(--font-mono); font-size: 0.8125rem; color: var(--text-secondary); }

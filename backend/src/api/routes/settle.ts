@@ -33,7 +33,7 @@ export function registerSettleRoutes(app: FastifyInstance) {
 
   app.post("/settlements/:id/release", async (req, reply) => {
     const { id } = z.object({ id: z.string() }).parse(req.params);
-    await settlement.releaseHold(id);
+    await settlement.releaseHold(id, req.atlasIdentityId as string);
     reply.send({ settlementRecordId: id, status: "RELEASED" });
   });
 
@@ -50,7 +50,29 @@ export function registerSettleRoutes(app: FastifyInstance) {
 
   app.get("/identities/:id/balance/:asset", async (req, reply) => {
     const { id, asset } = z.object({ id: z.string(), asset: z.string() }).parse(req.params);
+    // A valid signature only proves who's asking, not whose data they may
+    // see — without this check any registered identity could read any
+    // other identity's balance just by naming a different id in the URL.
+    if (id !== req.atlasIdentityId) {
+      reply.code(403).send({ error: "Forbidden", message: "Cannot read another identity's balance." });
+      return;
+    }
     const balance = await ledger.balanceOf(id, asset);
     reply.send({ identityId: id, asset, balance: balance.toDecimalString() });
+  });
+
+  // Exempt from signature auth (see authMiddleware.ts) — a market quote
+  // isn't identity-scoped data, so there's nothing to authenticate. This is
+  // what the web client calls for the Convert tab's live estimate and the
+  // currency-selector total, instead of a rate hardcoded into frontend JS.
+  app.get("/rates/:cryptoAsset/:fiatAsset", async (req, reply) => {
+    const { cryptoAsset, fiatAsset } = z.object({ cryptoAsset: z.string(), fiatAsset: z.string() }).parse(req.params);
+    const quote = await liquidity.getQuote({ cryptoAsset, fiatAsset });
+    reply.send({
+      cryptoAsset: quote.cryptoAsset,
+      fiatAsset: quote.fiatAsset,
+      rate: quote.rateMinorPerMinor,
+      expiresAt: quote.expiresAt.toISOString(),
+    });
   });
 }

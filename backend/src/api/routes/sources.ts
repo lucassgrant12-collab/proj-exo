@@ -36,9 +36,29 @@ export function registerSourceRoutes(app: FastifyInstance) {
     reply.code(201).send(serializeBigInts(source));
   });
 
+  // The web client uses this to render real connected sources instead of
+  // trusting an unverified local cache — the server stays the source of
+  // truth, the client just displays it.
+  //
+  // The `id` here must match the caller's own signed identity — a valid
+  // signature proves *who* is asking, but says nothing about *whose* data
+  // they're allowed to see unless a handler actually checks that, which is
+  // exactly what this guards. Without it, any registered identity could
+  // read any other identity's connected-source labels just by naming a
+  // different id in the URL.
+  app.get("/identities/:id/funding-sources", async (req, reply) => {
+    const { id } = z.object({ id: z.string() }).parse(req.params);
+    if (id !== req.atlasIdentityId) {
+      reply.code(403).send({ error: "Forbidden", message: "Cannot read another identity's funding sources." });
+      return;
+    }
+    const list = await sources.listForIdentity(id);
+    reply.send(serializeBigInts(list));
+  });
+
   app.post("/funding-sources/:id/revoke", async (req, reply) => {
     const { id } = z.object({ id: z.string() }).parse(req.params);
-    const source = await sources.revoke(id);
+    const source = await sources.revoke(id, req.atlasIdentityId as string);
     reply.send(serializeBigInts(source));
   });
 
@@ -59,7 +79,7 @@ export function registerSourceRoutes(app: FastifyInstance) {
 
   app.post("/permission-grants/:id/revoke", async (req, reply) => {
     const { id } = z.object({ id: z.string() }).parse(req.params);
-    const grant = await sources.revokeGrant(id);
+    const grant = await sources.revokeGrant(id, req.atlasIdentityId as string);
     reply.send(serializeBigInts(grant));
   });
 }

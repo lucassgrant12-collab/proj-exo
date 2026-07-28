@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import Fastify from "fastify";
+import cors from "@fastify/cors";
 import { prisma } from "../db/client.js";
 import { registerAuthMiddleware } from "./authMiddleware.js";
 import { registerIdentityRoutes } from "./routes/identity.js";
@@ -18,6 +19,17 @@ declare module "fastify" {
 export function buildServer() {
   const app = Fastify({ logger: true });
   app.decorate("prisma", prisma);
+
+  // The web client is served from a different origin (its own Railway
+  // service, see web/) than this API, so the browser needs an explicit CORS
+  // allow before it'll let script.js's fetch() calls through at all. Every
+  // authenticated request here proves itself with an Ed25519 signature over
+  // its own body, not a cookie — there's no session to protect from a
+  // cross-site request forging it, which is what CORS's credentialed-request
+  // restrictions exist for. That's why this is safe to leave permissive
+  // (reflect any origin, no credentials) rather than maintaining an
+  // allowlist of frontend origins.
+  app.register(cors, { origin: true, credentials: false });
 
   // Registers the raw-body content-type parser and the signature-verifying
   // preHandler hook. Must be registered before the routes that depend on

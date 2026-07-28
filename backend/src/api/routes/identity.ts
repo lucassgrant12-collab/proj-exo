@@ -26,4 +26,18 @@ export function registerIdentityRoutes(app: FastifyInstance) {
     const identity = await identities.get(id);
     reply.send(serializeBigInts(identity));
   });
+
+  // Exempt from signature auth (see authMiddleware.ts) — same reasoning as
+  // registration: a public key isn't secret, and this is exactly what lets a
+  // client that just reconstructed its private key via recovery find out
+  // which identity id to sign subsequent requests as.
+  app.get("/identities/lookup", async (req, reply) => {
+    const { publicKey } = z.object({ publicKey: z.string().min(1) }).parse(req.query);
+    const identity = await identities.findByPublicKey(publicKey);
+    if (!identity) {
+      reply.code(404).send({ error: "NotFound", message: "No identity registered for that public key." });
+      return;
+    }
+    reply.send(serializeBigInts(identity));
+  });
 }

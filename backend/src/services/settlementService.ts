@@ -146,8 +146,14 @@ export class SettlementService {
 
   /** Called once a HELD record's hold window has passed with no dispute —
    * the position becomes freely withdrawable/spendable. */
-  async releaseHold(settlementRecordId: string): Promise<void> {
-    const record = await this.db.settlementRecord.findUniqueOrThrow({ where: { id: settlementRecordId } });
+  async releaseHold(settlementRecordId: string, requestingIdentityId: string): Promise<void> {
+    const record = await this.db.settlementRecord.findUniqueOrThrow({
+      where: { id: settlementRecordId },
+      include: { grant: true },
+    });
+    if (record.grant.identityId !== requestingIdentityId) {
+      throw new Error(`Settlement ${settlementRecordId} does not belong to the requesting identity.`);
+    }
     if (record.status !== "HELD") {
       throw new Error(`Settlement ${settlementRecordId} is ${record.status}, not HELD; nothing to release.`);
     }
@@ -168,7 +174,18 @@ export class SettlementService {
     identityId: string;
     cryptoAsset: string;
   }): Promise<{ recoveredCrypto: boolean }> {
-    const record = await this.db.settlementRecord.findUniqueOrThrow({ where: { id: args.settlementRecordId } });
+    const record = await this.db.settlementRecord.findUniqueOrThrow({
+      where: { id: args.settlementRecordId },
+      include: { grant: true },
+    });
+    // Without this, any identity could reverse *any* settlement it merely
+    // knows the id of — since holdUnwind below posts ledger entries against
+    // whatever identityId is passed in, that wouldn't just leak data, it
+    // would let an attacker move someone else's held position's ledger
+    // entries onto their own account.
+    if (record.grant.identityId !== args.identityId) {
+      throw new Error(`Settlement ${args.settlementRecordId} does not belong to the requesting identity.`);
+    }
     if (record.status === "REVERSED") {
       throw new Error(`Settlement ${args.settlementRecordId} was already reversed.`);
     }

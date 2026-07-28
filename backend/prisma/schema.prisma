@@ -15,8 +15,15 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // Both point at Supabase's session-mode Supavisor pooler (IPv4) rather
+  // than the direct host (IPv6-only, unreachable from Railway) or the
+  // transaction-mode pooler (breaks Prisma's interactive $transaction() —
+  // see ledgerService.ts's double-entry writes). See .env.example for the
+  // full story; this was found by actually running a settlement against a
+  // live database, not assumed.
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ---------------------------------------------------------------------------

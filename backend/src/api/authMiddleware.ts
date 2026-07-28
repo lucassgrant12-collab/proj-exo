@@ -29,8 +29,10 @@ const AUTH_EXEMPT_ROUTES: Array<{ method: string; path: string }> = [
   { method: "GET", path: "/" },
   { method: "GET", path: "/health" },
   { method: "POST", path: "/identities" }, // registration is what proves key possession, not a prerequisite for it
+  { method: "GET", path: "/identities/lookup" }, // public keys aren't secret — needed to resolve a recovered keypair back to its server-side identity id before any signed call is possible
   { method: "POST", path: "/webhooks/stripe" }, // authenticated a different way — see routes/webhooks.ts
   { method: "GET", path: "/spend-tokens/issuer-key" }, // public by definition — needed to blind a token request at all
+  { method: "GET", path: "/rates/:cryptoAsset/:fiatAsset" }, // illustrative market data, not identity-scoped — no reason to require a signature to read it
 ];
 
 function isExempt(req: FastifyRequest): boolean {

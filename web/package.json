@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Atlas prototype frontend — static HTML/CSS/JS, served by server.js. Not yet connected to backend/ — see its README.",
+  "description": "Atlas prototype frontend — static HTML/CSS/JS, served by server.js. Wired to backend/'s real API (see api.js): real Ed25519 identity generation and request signing, real funding-source/grant/settlement calls, real Shamir secret-sharing for recovery (shamir.js). Card connections are intentionally disabled until Stripe is configured server-side.",
   "scripts": {
     "start": "node server.js"
   },

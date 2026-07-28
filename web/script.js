@@ -5,34 +5,42 @@
   var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var cryptoAvailable = !!(window.crypto && window.crypto.subtle);
 
-  var RATES = { BTC: 51000, ETH: 2800, USDC: 0.79 };
-  var DECIMALS = { BTC: 6, ETH: 4, USDC: 2 };
+  // Fixed minor-unit decimal places per asset — a protocol constant, the
+  // same one backend/src/domain/money.ts defines server-side (ASSETS). This
+  // is display-formatting math only, never a market rate: nothing below
+  // uses this to price anything. Real rates always come from
+  // AtlasAPI.getRate(), a live call to the backend.
+  var ASSET_DECIMALS = { GBP: 2, USD: 2, BTC: 8, ETH: 18, USDC: 6 };
+  var CRYPTO_ASSETS = ["BTC", "ETH", "USDC"];
 
-  function hex(len) { var s = ""; for (var i = 0; i < len; i++) s += Math.floor(Math.random() * 16).toString(16); return s; }
-  function randDigits(len) { var s = ""; for (var i = 0; i < len; i++) s += Math.floor(Math.random() * 10); return s; }
-  function makeIdentity() {
-    var groups = [];
-    for (var i = 0; i < 4; i++) groups.push(randDigits(4));
-    return "ATLAS " + groups.join(" ");
-  }
-  function makeFingerprint() { var g = []; for (var i = 0; i < 8; i++) g.push(hex(4)); return g.join(" "); }
-  function makeRecoveryKey() {
-    var groups = [];
-    for (var i = 0; i < 4; i++) groups.push(hex(4).toUpperCase());
-    return groups.join("-");
+  function minorToDecimalString(minorUnitsStr, decimals) {
+    var negative = minorUnitsStr.charAt(0) === "-";
+    var abs = negative ? minorUnitsStr.slice(1) : minorUnitsStr;
+    var s = abs.padStart(decimals + 1, "0");
+    var whole = s.slice(0, s.length - decimals) || "0";
+    var frac = decimals > 0 ? "." + s.slice(s.length - decimals) : "";
+    return (negative ? "-" : "") + whole + frac;
   }
 
   function formatGBP(n) {
     return new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(n || 0);
   }
-  function formatCrypto(asset, n) {
-    return (n || 0).toFixed(DECIMALS[asset] || 4);
+  function formatFiat(n, currency) {
+    return new Intl.NumberFormat(currency === "USD" ? "en-US" : "en-GB", { style: "currency", currency: currency }).format(n || 0);
+  }
+  function formatCrypto(asset, decimalStr) {
+    var n = parseFloat(decimalStr) || 0;
+    var places = asset === "BTC" ? 6 : asset === "ETH" ? 5 : 2; // display precision, not the ledger's real precision
+    return n.toFixed(places);
   }
 
-  /* ---------------- vault encryption (AES-256-GCM, key generated on-device) ---------------- */
+  /* ---------------- vault encryption (AES-256-GCM, key generated on-device) ----------------
+   * Unchanged from the original prototype's design and still real: this is
+   * what protects the identity's private key seed at rest in localStorage.
+   * The key never leaves this device either way — this just means the copy
+   * sitting in localStorage isn't plaintext. */
 
   var KEY_STORAGE_KEY = "atlas_demo_key_v1";
-
   var textEncoder = new TextEncoder();
   var textDecoder = new TextDecoder();
 
@@ -48,10 +56,6 @@
     return bytes;
   }
 
-  // No passphrase: the key is generated once and stored on this device, so
-  // encryption is invisible and automatic. That protects data copied or
-  // intercepted elsewhere, but not someone with this device itself, open
-  // and unlocked — see the Anonymity page for the honest boundary.
   async function getOrCreateLocalKey() {
     var stored = localStorage.getItem(KEY_STORAGE_KEY);
     if (stored) {
@@ -70,7 +74,6 @@
     var ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, key, plaintext);
     return { iv: bytesToBase64(iv), data: bytesToBase64(new Uint8Array(ciphertext)) };
   }
-
   async function decryptJSON(envelope, key) {
     var iv = base64ToBytes(envelope.iv);
     var data = base64ToBytes(envelope.data);
@@ -82,14 +85,33 @@
 
   var state = null;
   var cryptoKey = null;
+  // The live signing session — {identityId, privateKey (CryptoKey)}. Rebuilt
+  // from state.seedB64 on boot and after generation/recovery; never itself
+  // persisted, since a CryptoKey isn't serializable and doesn't need to be —
+  // the seed is what's stored, the key is reimported from it each load.
+  var session = null;
+  var sourcesCache = [];
 
   function defaultState() {
-    return { identity: null, onboardingComplete: false, recoveryEnabled: false, recoveryKeys: [], sources: [], holdings: { BTC: 0, ETH: 0, USDC: 0 }, activity: [] };
+    return {
+      identityId: null,
+      displayId: null,
+      fingerprint: null,
+      publicKeyB64: null,
+      seedB64: null,
+      onboardingComplete: false,
+      recoveryEnabled: false,
+      recoveryKeys: [], // only known locally if generated/regenerated on this device — see Settings
+      displayCurrency: "GBP",
+      activity: [],
+    };
   }
 
   function pushActivity(text) {
     state.activity.unshift({ text: text, ts: Date.now() });
     state.activity = state.activity.slice(0, 12);
+    saveState();
+    renderActivity();
   }
 
   async function saveState() {
@@ -97,80 +119,98 @@
       var envelope = await encryptJSON(state, cryptoKey);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(envelope));
     } else {
-      // No Web Crypto available on this device. Kept functional, but
-      // unencrypted — the crypto-warning banner stays visible whenever
-      // this path is in use.
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ plain: true, state: state }));
     }
   }
 
-  /* ---------------- shared: log animation ---------------- */
-
-  function runLog(el, lines, delay, cb) {
-    el.innerHTML = "";
-    if (reduced) {
-      lines.forEach(function (t) {
-        var d = document.createElement("div");
-        d.className = "line shown";
-        d.textContent = t;
-        el.appendChild(d);
-      });
-      cb();
-      return;
-    }
-    lines.forEach(function (t, i) {
-      setTimeout(function () {
-        var d = document.createElement("div");
-        d.className = "line";
-        d.textContent = t;
-        el.appendChild(d);
-        requestAnimationFrame(function () { d.classList.add("shown"); });
-        if (i === lines.length - 1) setTimeout(cb, 320);
-      }, i * delay);
-    });
+  async function buildSessionFromState() {
+    var keyPair = await AtlasAPI.importKeyPairFromSeed(base64ToBytes(state.seedB64), base64ToBytes(state.publicKeyB64));
+    session = { identityId: state.identityId, privateKey: keyPair.privateKey };
   }
 
-  /* ---------------- sources ---------------- */
+  /* ---------------- live log (real steps, real timing — no scripted delays) ---------------- */
 
-  function addSource(tag, name, balance) {
-    var id = "src_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    state.sources.push({ id: id, tag: tag, name: name, balance: (balance === undefined ? null : balance) });
-    saveState();
-    renderAll();
+  function makeLiveLog(el) {
+    el.innerHTML = "";
+    return {
+      line: function (text, isError) {
+        var d = document.createElement("div");
+        d.className = "line" + (isError ? " line-error" : "");
+        d.textContent = text;
+        el.appendChild(d);
+        if (reduced) {
+          d.classList.add("shown");
+        } else {
+          requestAnimationFrame(function () { d.classList.add("shown"); });
+        }
+      },
+    };
+  }
+
+  /* ---------------- funding sources (server is the source of truth) ---------------- */
+
+  async function refreshSources() {
+    sourcesCache = await AtlasAPI.listFundingSources(session);
+    return sourcesCache;
   }
 
   function sourceRowHTML(s) {
-    var value = s.balance === null ? "Attested" : formatGBP(s.balance);
-    return '<li><span class="row-main"><span class="row-tag">' + s.tag + '</span>' +
-      '<span class="row-name">' + s.name + "</span></span>" +
-      '<span class="row-value">' + value + "</span></li>";
+    var revokeBtn = s.status === "ACTIVE"
+      ? '<button class="row-revoke" data-revoke-id="' + s.id + '" type="button">Revoke</button>'
+      : '<span class="row-revoked">Revoked</span>';
+    return '<li><span class="row-main"><span class="row-tag">' + s.kind + '</span>' +
+      '<span class="row-name">' + s.label + "</span></span>" +
+      '<span class="row-value">' + revokeBtn + "</span></li>";
   }
 
   function renderSourceLists() {
-    var html = state.sources.map(sourceRowHTML).join("");
+    var html = sourcesCache.map(sourceRowHTML).join("");
     ["ob-sources-list", "main-sources-list"].forEach(function (id) {
       var el = document.getElementById(id);
-      if (el) el.innerHTML = html;
+      if (!el) return;
+      el.innerHTML = html;
+      el.querySelectorAll("[data-revoke-id]").forEach(function (btn) {
+        btn.addEventListener("click", async function () {
+          btn.disabled = true;
+          btn.textContent = "Revoking…";
+          try {
+            await AtlasAPI.revokeFundingSource(session, btn.getAttribute("data-revoke-id"));
+            var source = sourcesCache.find(function (s) { return s.id === btn.getAttribute("data-revoke-id"); });
+            pushActivity("Revoked " + (source ? source.kind + " · " + source.label : "source"));
+            await refreshSources();
+            renderSourceLists();
+            renderConvertForm();
+          } catch (err) {
+            btn.disabled = false;
+            btn.textContent = "Revoke";
+            alert("Could not revoke: " + err.message);
+          }
+        });
+      });
     });
     var empty = document.getElementById("sources-empty");
-    if (empty) empty.hidden = state.sources.length > 0;
+    if (empty) empty.hidden = sourcesCache.length > 0;
   }
 
-  function renderHoldings() {
+  /* ---------------- holdings (real balances, fetched live) ---------------- */
+
+  async function renderHoldings() {
     var el = document.getElementById("holdings-list");
     var empty = document.getElementById("holdings-empty");
     if (!el) return;
     var rows = [];
-    Object.keys(state.holdings).forEach(function (asset) {
-      var amt = state.holdings[asset];
-      if (amt > 0) {
+    for (var i = 0; i < CRYPTO_ASSETS.length; i++) {
+      var asset = CRYPTO_ASSETS[i];
+      var res = await AtlasAPI.getBalance(session, asset);
+      if (parseFloat(res.balance) > 0) {
         rows.push('<li><span class="row-main"><span class="row-tag">POSITION</span>' +
           '<span class="row-name">' + asset + "</span></span>" +
-          '<span class="row-value">' + formatCrypto(asset, amt) + " " + asset + "</span></li>");
+          '<span class="row-value">' + formatCrypto(asset, res.balance) + " " + asset + "</span></li>");
       }
-    });
+    }
     el.innerHTML = rows.join("");
     if (empty) empty.hidden = rows.length > 0;
+    return rows.length;
   }
 
   function renderActivity() {
@@ -184,15 +224,24 @@
     if (empty) empty.hidden = state.activity.length > 0;
   }
 
-  function totalValue() {
+  async function renderTotalValue() {
+    var statTotal = document.getElementById("stat-total");
+    if (!statTotal) return;
+    statTotal.textContent = "…";
     var total = 0;
-    state.sources.forEach(function (s) { if (s.balance) total += s.balance; });
-    Object.keys(state.holdings).forEach(function (asset) { total += state.holdings[asset] * RATES[asset]; });
-    return total;
-  }
-
-  function holdingsCount() {
-    return Object.keys(state.holdings).filter(function (a) { return state.holdings[a] > 0; }).length;
+    for (var i = 0; i < CRYPTO_ASSETS.length; i++) {
+      var asset = CRYPTO_ASSETS[i];
+      var balRes = await AtlasAPI.getBalance(session, asset);
+      var amt = parseFloat(balRes.balance);
+      if (amt > 0) {
+        var rateRes = await AtlasAPI.getRate(asset, state.displayCurrency);
+        total += amt * rateRes.rate;
+      }
+    }
+    // This total is a display-only aggregate for the dashboard header — the
+    // ledger itself never stores or moves a float; every real balance above
+    // came from the server as an exact decimal string.
+    statTotal.textContent = formatFiat(total, state.displayCurrency);
   }
 
   /* ---------------- onboarding ---------------- */
@@ -206,7 +255,6 @@
     });
     document.getElementById("step-current").textContent = obStep;
     document.getElementById("progress-fill").style.width = (obStep / 4 * 100) + "%";
-
     document.querySelector(".onboarding-nav").hidden = obStep === 1;
 
     var back = document.getElementById("ob-back");
@@ -223,25 +271,37 @@
     else next.textContent = "Enter Atlas";
   }
 
-  function startIdentityGeneration() {
+  async function startIdentityGeneration() {
     document.getElementById("gen-idle").hidden = true;
     genPhase = "generating";
     renderOnboarding();
-    var logEl = document.getElementById("gen-log");
-    runLog(logEl, [
-      "Collecting local entropy",
-      "Deriving Ed25519 keypair",
-      "Computing key fingerprint",
-      "Assigning identity number",
-      "Identity ready"
-    ], 260, async function () {
-      state.identity = { id: makeIdentity(), fingerprint: makeFingerprint() };
+    var log = makeLiveLog(document.getElementById("gen-log"));
+    try {
+      log.line("Generating Ed25519 keypair…");
+      var keyPair = await AtlasAPI.generateKeyPair();
+      log.line("Registering with Atlas (" + AtlasAPI.API_BASE + ")…");
+      var identity = await AtlasAPI.registerIdentity(keyPair);
+      var seed = await AtlasAPI.exportSeed(keyPair);
+
+      state.identityId = identity.id;
+      state.displayId = identity.displayId;
+      state.fingerprint = identity.publicKeyFingerprint;
+      state.publicKeyB64 = identity.publicKey;
+      state.seedB64 = bytesToBase64(seed);
       await saveState();
-      document.getElementById("identity-id").textContent = state.identity.id;
-      document.getElementById("fingerprint").textContent = state.identity.fingerprint;
+      session = { identityId: identity.id, privateKey: keyPair.privateKey };
+
+      log.line("Identity ready.");
+      document.getElementById("identity-id").textContent = state.displayId;
+      document.getElementById("fingerprint").textContent = state.fingerprint;
       genPhase = "done";
       renderOnboarding();
-    });
+    } catch (err) {
+      log.line("Failed: " + err.message, true);
+      genPhase = "idle";
+      document.getElementById("gen-idle").hidden = false;
+      renderOnboarding();
+    }
   }
 
   async function enterApp() {
@@ -249,7 +309,7 @@
     await saveState();
     document.getElementById("onboarding").hidden = true;
     document.getElementById("app").hidden = false;
-    renderAll();
+    await renderAll();
   }
 
   document.getElementById("ob-next").addEventListener("click", function () {
@@ -267,7 +327,7 @@
     renderOnboarding();
   });
 
-  /* ---------------- recover an existing identity ---------------- */
+  /* ---------------- recover an existing identity (real 3-of-5 Shamir) ---------------- */
 
   var identityChoice = document.getElementById("identity-choice");
   var recoveryPanel = document.getElementById("recovery-panel");
@@ -301,50 +361,61 @@
   document.getElementById("recover-back").addEventListener("click", resetRecoveryUI);
 
   document.getElementById("recover-submit").addEventListener("click", async function () {
-    var inputs = recoveryKeyInputs();
-    var keys = inputs.map(function (el) { return el.value.trim(); });
+    var texts = recoveryKeyInputs().map(function (el) { return el.value.trim(); }).filter(Boolean);
     recoverError.hidden = true;
 
-    if (keys.some(function (k) { return !k; })) {
-      recoverError.textContent = "Enter all 5 recovery keys.";
+    if (texts.length < AtlasAPI.recoveryThreshold) {
+      recoverError.textContent = "Enter at least " + AtlasAPI.recoveryThreshold + " of your " + AtlasAPI.recoveryShareCount + " recovery keys.";
       recoverError.hidden = false;
       return;
     }
 
-    inputs.forEach(function (el) { el.disabled = true; });
+    recoveryKeyInputs().forEach(function (el) { el.disabled = true; });
     document.getElementById("recover-submit").disabled = true;
     document.getElementById("recover-back").disabled = true;
     recoverPanelFrame.hidden = false;
 
-    var logEl = document.getElementById("recover-log");
-    runLog(logEl, [
-      "Verifying recovery keys",
-      "Reconstructing identity",
-      "Identity restored"
-    ], 300, async function () {
-      state.identity = { id: makeIdentity(), fingerprint: makeFingerprint() };
+    var log = makeLiveLog(document.getElementById("recover-log"));
+    try {
+      log.line("Reconstructing private key from recovery shares…");
+      var result = await AtlasAPI.recoverIdentity(texts);
+      log.line("Looking up identity…");
+      var seed = await AtlasAPI.exportSeed(result.keyPair);
+
+      state.identityId = result.identity.id;
+      state.displayId = result.identity.displayId;
+      state.fingerprint = result.identity.publicKeyFingerprint;
+      state.publicKeyB64 = result.identity.publicKey;
+      state.seedB64 = bytesToBase64(seed);
       state.recoveryEnabled = true;
-      state.recoveryKeys = keys;
+      state.recoveryKeys = []; // we only hold the keys just typed in, not necessarily all 5 — see Settings
       await saveState();
-      document.getElementById("identity-id").textContent = state.identity.id;
-      document.getElementById("fingerprint").textContent = state.identity.fingerprint;
+      session = { identityId: result.identity.id, privateKey: result.keyPair.privateKey };
+
+      log.line("Identity restored.");
+      document.getElementById("identity-id").textContent = state.displayId;
+      document.getElementById("fingerprint").textContent = state.fingerprint;
       genPhase = "done";
       obStep = 3;
       renderOnboarding();
-    });
+    } catch (err) {
+      log.line("Failed: " + err.message, true);
+      resetRecoveryUI();
+      recoverError.textContent = err.message;
+      recoverError.hidden = false;
+    }
   });
 
-  /* ---------------- connect a source (real, user-entered) ---------------- */
+  /* ---------------- connect a source (real backend calls) ---------------- */
 
-  function setupConnectForm(prefix, bankBtnId, walletBtnId, cardBtnId) {
+  function setupConnectForm(prefix, bankBtnId, walletBtnId) {
     var form = document.getElementById(prefix + "-connect-form");
     var errorEl = document.getElementById(prefix + "-connect-error");
     var fieldsByType = {
-      BANK: [prefix + "-field-bank-name", prefix + "-field-bank-balance"],
+      BANK: [prefix + "-field-bank-name"],
       WALLET: [prefix + "-field-wallet"],
-      CARD: [prefix + "-field-card"]
     };
-    var allFieldIds = fieldsByType.BANK.concat(fieldsByType.WALLET, fieldsByType.CARD);
+    var allFieldIds = fieldsByType.BANK.concat(fieldsByType.WALLET);
     var currentType = null;
 
     function showError(msg) {
@@ -372,34 +443,53 @@
 
     document.getElementById(bankBtnId).addEventListener("click", function () { openForm("BANK"); });
     document.getElementById(walletBtnId).addEventListener("click", function () { openForm("WALLET"); });
-    document.getElementById(cardBtnId).addEventListener("click", function () { openForm("CARD"); });
     document.getElementById(prefix + "-connect-cancel").addEventListener("click", closeForm);
 
-    document.getElementById(prefix + "-connect-add").addEventListener("click", function () {
+    document.getElementById(prefix + "-connect-add").addEventListener("click", async function () {
       errorEl.hidden = true;
+      var addBtn = document.getElementById(prefix + "-connect-add");
+      var args = null;
+
       if (currentType === "BANK") {
         var bankName = document.getElementById(prefix + "-input-bank-name").value.trim();
-        var balance = parseFloat(document.getElementById(prefix + "-input-bank-balance").value);
         if (!bankName) { showError("Enter a bank name."); return; }
-        if (isNaN(balance) || balance < 0) { showError("Enter a starting balance."); return; }
-        addSource("BANK", bankName, balance);
+        // PISP (Open Banking) linking has no real provider integration yet
+        // on the backend either — see backend/src/adapters/funding/stub.ts.
+        // This reference is honestly a local placeholder, exactly matching
+        // what the server-side stub already documents about itself; it is
+        // NOT presented as a real bank connection the way the old fake
+        // "balance" field was.
+        args = { kind: "BANK", rail: "PISP", label: bankName, externalRef: "local-consent-" + crypto.randomUUID() };
       } else if (currentType === "WALLET") {
         var address = document.getElementById(prefix + "-input-wallet").value.trim();
         if (!address) { showError("Enter a wallet address."); return; }
-        addSource("WALLET", address);
-      } else if (currentType === "CARD") {
-        var cardLabel = document.getElementById(prefix + "-input-card").value.trim();
-        if (!cardLabel) { showError("Enter a card label."); return; }
-        addSource("CARD", cardLabel);
+        args = { kind: "WALLET", rail: "ONCHAIN", label: address, externalRef: address };
+      } else {
+        return;
       }
-      closeForm();
+
+      addBtn.disabled = true;
+      addBtn.textContent = "Connecting…";
+      try {
+        var source = await AtlasAPI.connectFundingSource(session, args);
+        pushActivity("Connected " + source.kind + " · " + source.label);
+        await refreshSources();
+        renderSourceLists();
+        renderConvertForm();
+        closeForm();
+      } catch (err) {
+        showError(err.message);
+      } finally {
+        addBtn.disabled = false;
+        addBtn.textContent = "Add source";
+      }
     });
 
     return { openForm: openForm };
   }
 
-  setupConnectForm("ob", "connect-bank", "connect-wallet", "connect-card");
-  var mainConnect = setupConnectForm("main", "connect-bank-2", "connect-wallet-2", "connect-card-2");
+  setupConnectForm("ob", "connect-bank", "connect-wallet");
+  var mainConnect = setupConnectForm("main", "connect-bank-2", "connect-wallet-2");
 
   /* ---------------- app shell / tabs ---------------- */
 
@@ -409,11 +499,12 @@
       document.querySelectorAll(".tab-panel").forEach(function (p) {
         p.classList.toggle("is-active", p.dataset.tab === btn.dataset.tab);
       });
+      if (btn.dataset.tab === "convert") renderConvertForm();
     });
   });
 
   document.getElementById("reset-demo").addEventListener("click", function () {
-    if (confirm("Reset your Atlas identity and start over? This clears everything in this demo.")) {
+    if (confirm("Reset your Atlas identity on this device? This forgets the private key locally — recovery keys (if enabled) are the only way back in. The identity itself still exists on the server.")) {
       localStorage.removeItem(STORAGE_KEY);
       window.location.reload();
     }
@@ -427,21 +518,41 @@
     var btn = document.getElementById("recovery-enable-btn");
     var block = document.getElementById("recovery-keys-block");
     var grid = document.getElementById("recovery-keys-grid");
+    var regenNote = document.getElementById("recovery-regen-note");
 
     if (state.recoveryEnabled) {
       statusEl.textContent = "Recovery is on, permanently";
       btn.textContent = "Recovery enabled";
       btn.disabled = true;
-      block.hidden = false;
-      grid.innerHTML = state.recoveryKeys.map(function (k, i) {
-        return '<div class="recovery-key"><span class="k-label">Key ' + (i + 1) + '</span><span class="k-value">' + k + "</span></div>";
-      }).join("");
+      if (state.recoveryKeys.length === 5) {
+        block.hidden = false;
+        regenNote.hidden = true;
+        grid.innerHTML = state.recoveryKeys.map(function (k, i) {
+          return '<div class="recovery-key"><span class="k-label">Key ' + (i + 1) + '</span><span class="k-value">' + k + "</span></div>";
+        }).join("");
+      } else {
+        block.hidden = true;
+        regenNote.hidden = false;
+      }
     } else {
       statusEl.textContent = "Recovery is off";
       btn.textContent = "Enable recovery";
       btn.disabled = false;
       block.hidden = true;
+      regenNote.hidden = true;
     }
+
+    var currencySelect = document.getElementById("display-currency");
+    if (currencySelect) currencySelect.value = state.displayCurrency;
+  }
+
+  async function generateAndStoreRecoveryKeys() {
+    var keyPair = await AtlasAPI.importKeyPairFromSeed(base64ToBytes(state.seedB64), base64ToBytes(state.publicKeyB64));
+    var keys = await AtlasAPI.makeRecoveryKeys(keyPair);
+    state.recoveryEnabled = true;
+    state.recoveryKeys = keys;
+    await saveState();
+    renderSettings();
   }
 
   var recoveryConfirm = document.getElementById("recovery-confirm");
@@ -457,15 +568,30 @@
     document.getElementById("recovery-enable-btn").disabled = false;
   });
 
-  document.getElementById("recovery-confirm-yes").addEventListener("click", function () {
-    var keys = [];
-    for (var i = 0; i < 5; i++) keys.push(makeRecoveryKey());
-    state.recoveryEnabled = true;
-    state.recoveryKeys = keys;
-    saveState();
+  document.getElementById("recovery-confirm-yes").addEventListener("click", async function () {
     recoveryConfirm.hidden = true;
-    renderSettings();
+    await generateAndStoreRecoveryKeys();
+    pushActivity("Recovery enabled — 5 real key shares generated (any 3 restore this identity)");
   });
+
+  var regenBtn = document.getElementById("recovery-regen-btn");
+  if (regenBtn) {
+    regenBtn.addEventListener("click", async function () {
+      if (!confirm("Generate a fresh set of 5 recovery keys? Any recovery keys from before this identity was restored on this device will stop working.")) return;
+      await generateAndStoreRecoveryKeys();
+      pushActivity("Recovery keys regenerated");
+    });
+  }
+
+  var currencySelectEl = document.getElementById("display-currency");
+  if (currencySelectEl) {
+    currencySelectEl.addEventListener("change", async function () {
+      state.displayCurrency = currencySelectEl.value;
+      await saveState();
+      await renderTotalValue();
+      renderConvertForm();
+    });
+  }
 
   /* ---------------- trust ---------------- */
 
@@ -495,7 +621,7 @@
   document.getElementById("trust-anonymity-link").addEventListener("click", function () { openAnonymity(true); });
   document.getElementById("anonymity-back").addEventListener("click", closeAnonymity);
 
-  /* ---------------- convert ---------------- */
+  /* ---------------- convert (real grant + real settlement) ---------------- */
 
   var convertFromSelect = document.getElementById("convert-from");
   var convertToSelect = document.getElementById("convert-to");
@@ -506,66 +632,89 @@
   var convertEmpty = document.getElementById("convert-empty");
   var convertPanel = document.getElementById("convert-panel");
 
+  var rateCache = null; // { asset, rate }
+
   function renderConvertForm() {
-    var banks = state.sources.filter(function (s) { return s.tag === "BANK"; });
+    var banks = sourcesCache.filter(function (s) { return s.kind === "BANK" && s.status === "ACTIVE"; });
     convertEmpty.hidden = banks.length > 0;
     if (convertPanel.hidden) {
       convertForm.hidden = banks.length === 0;
     }
     convertFromSelect.innerHTML = banks.map(function (b) {
-      return '<option value="' + b.id + '">' + b.name + " · " + formatGBP(b.balance) + "</option>";
+      return '<option value="' + b.id + '">' + b.label + "</option>";
     }).join("");
   }
 
-  function updateEstimate() {
-    var amt = parseFloat(convertAmount.value) || 0;
+  async function fetchRateIfNeeded() {
     var asset = convertToSelect.value;
-    var rate = RATES[asset];
+    if (rateCache && rateCache.asset === asset) return rateCache;
+    var res = await AtlasAPI.getRate(asset, "GBP");
+    rateCache = { asset: asset, rate: res.rate };
+    return rateCache;
+  }
+
+  async function updateEstimate() {
+    var amt = parseFloat(convertAmount.value) || 0;
     if (amt <= 0) { convertEstimate.textContent = "Enter an amount to see the estimate."; return; }
-    convertEstimate.textContent = "≈ " + formatCrypto(asset, amt / rate) + " " + asset + " at " + formatGBP(rate) + "/" + asset + " (illustrative rate)";
+    try {
+      var rate = await fetchRateIfNeeded();
+      convertEstimate.textContent = "≈ " + (amt / rate.rate).toFixed(8) + " " + rate.asset + " at " + formatGBP(rate.rate) + "/" + rate.asset + " (live from the backend, illustrative rate)";
+    } catch (err) {
+      convertEstimate.textContent = "Could not fetch a rate: " + err.message;
+    }
   }
 
   convertAmount.addEventListener("input", updateEstimate);
-  convertToSelect.addEventListener("change", updateEstimate);
+  convertToSelect.addEventListener("change", function () { rateCache = null; updateEstimate(); });
 
   document.getElementById("convert-connect-bank").addEventListener("click", function () {
     document.querySelector('.nav-btn[data-tab="identity"]').click();
     mainConnect.openForm("BANK");
   });
 
-  convertForm.addEventListener("submit", function (e) {
+  convertForm.addEventListener("submit", async function (e) {
     e.preventDefault();
     convertError.hidden = true;
-    var source = state.sources.find(function (s) { return s.id === convertFromSelect.value; });
+    var source = sourcesCache.find(function (s) { return s.id === convertFromSelect.value; });
     var amount = parseFloat(convertAmount.value);
     var asset = convertToSelect.value;
 
     if (!source) { showConvertError("Connect a bank first."); return; }
     if (!amount || amount <= 0) { showConvertError("Enter an amount greater than zero."); return; }
-    if (amount > source.balance) { showConvertError("That exceeds the connected balance."); return; }
 
     convertForm.hidden = true;
     convertPanel.hidden = false;
     document.getElementById("convert-success").hidden = true;
 
-    var logEl = document.getElementById("convert-log");
-    runLog(logEl, [
-      "Negotiating settlement route",
-      "Selecting adapter: bank → stablecoin → chain",
-      "Locking claim against bank evidence",
-      "Minting equivalent position on-chain",
-      "Settled instantly"
-    ], 320, function () {
-      var gained = amount / RATES[asset];
-      source.balance -= amount;
-      state.holdings[asset] = (state.holdings[asset] || 0) + gained;
-      pushActivity("Converted " + formatGBP(amount) + " to " + formatCrypto(asset, gained) + " " + asset);
-      saveState();
+    var log = makeLiveLog(document.getElementById("convert-log"));
+    var amountDecimal = amount.toFixed(2);
+    try {
+      log.line("Creating a single-use permission grant for £" + amountDecimal + "…");
+      var grant = await AtlasAPI.createGrant(session, {
+        fundingSourceId: source.id,
+        limitAsset: "GBP",
+        limitDecimal: amountDecimal,
+        windowSeconds: 3600,
+        singleUse: true,
+      });
+      log.line("Executing settlement…");
+      var result = await AtlasAPI.purchase(session, {
+        grantId: grant.id,
+        fiatAsset: "GBP",
+        fiatDecimal: amountDecimal,
+        cryptoAsset: asset,
+      });
+      var allocatedDecimal = minorToDecimalString(result.cryptoAllocated.minorUnits, ASSET_DECIMALS[asset]);
+      log.line("Settled.");
+      pushActivity("Converted £" + amountDecimal + " to " + formatCrypto(asset, allocatedDecimal) + " " + asset);
       document.getElementById("convert-success-text").textContent =
-        "Converted " + formatGBP(amount) + " to " + formatCrypto(asset, gained) + " " + asset + ".";
+        "Converted £" + amountDecimal + " to " + formatCrypto(asset, allocatedDecimal) + " " + asset + ".";
       document.getElementById("convert-success").hidden = false;
-      renderAll();
-    });
+      await renderHoldings();
+      await renderTotalValue();
+    } catch (err) {
+      log.line("Failed: " + err.message, true);
+    }
   });
 
   function showConvertError(msg) {
@@ -583,24 +732,26 @@
 
   /* ---------------- render all ---------------- */
 
-  function renderAll() {
-    if (!state.identity) return;
+  async function renderAll() {
+    if (!state.identityId) return;
     var sidebarId = document.getElementById("sidebar-id");
-    if (sidebarId) sidebarId.textContent = state.identity.id;
+    if (sidebarId) sidebarId.textContent = state.displayId;
     var mainId = document.getElementById("main-identity-id");
-    if (mainId) mainId.textContent = state.identity.id;
+    if (mainId) mainId.textContent = state.displayId;
     var mainFp = document.getElementById("main-fingerprint");
-    if (mainFp) mainFp.textContent = state.identity.fingerprint;
+    if (mainFp) mainFp.textContent = state.fingerprint;
 
-    var statTotal = document.getElementById("stat-total");
-    if (statTotal) statTotal.textContent = formatGBP(totalValue());
-    var statSources = document.getElementById("stat-sources");
-    if (statSources) statSources.textContent = String(state.sources.length);
-    var statHoldings = document.getElementById("stat-holdings");
-    if (statHoldings) statHoldings.textContent = String(holdingsCount());
-
+    await refreshSources();
     renderSourceLists();
-    renderHoldings();
+
+    var statSources = document.getElementById("stat-sources");
+    if (statSources) statSources.textContent = String(sourcesCache.length);
+
+    var holdingsCount = await renderHoldings();
+    var statHoldings = document.getElementById("stat-holdings");
+    if (statHoldings) statHoldings.textContent = String(holdingsCount);
+
+    await renderTotalValue();
     renderActivity();
     renderConvertForm();
     updateEstimate();
@@ -611,21 +762,20 @@
 
   var cryptoWarning = document.getElementById("crypto-warning");
 
-  function showApp() {
-    if (state.identity && state.onboardingComplete) {
+  async function showApp() {
+    if (state.identityId && state.onboardingComplete) {
+      await buildSessionFromState();
       document.getElementById("onboarding").hidden = true;
       document.getElementById("app").hidden = false;
-      renderAll();
-    } else if (state.identity) {
-      // Identity was generated but onboarding wasn't finished. Resume
-      // at the debrief step instead of granting dashboard access early.
+      await renderAll();
+    } else if (state.identityId) {
+      await buildSessionFromState();
       document.getElementById("gen-idle").hidden = true;
-      document.getElementById("identity-id").textContent = state.identity.id;
-      document.getElementById("fingerprint").textContent = state.identity.fingerprint;
+      document.getElementById("identity-id").textContent = state.displayId;
+      document.getElementById("fingerprint").textContent = state.fingerprint;
       genPhase = "done";
       obStep = 3;
       renderOnboarding();
-      renderSourceLists();
     } else {
       renderOnboarding();
     }
@@ -645,7 +795,7 @@
       } else {
         state = defaultState();
       }
-      showApp();
+      await showApp();
       return;
     }
 
@@ -656,15 +806,12 @@
         var decrypted = await decryptJSON(parsed, cryptoKey);
         state = Object.assign(defaultState(), decrypted);
       } catch (e) {
-        // Encrypted with a key that no longer matches (e.g. the key
-        // entry was cleared independently of the data). Nothing to
-        // recover from here, so start fresh rather than get stuck.
         state = defaultState();
       }
     } else {
       state = defaultState();
     }
-    showApp();
+    await showApp();
   }
 
   boot();

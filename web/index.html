@@ -34,13 +34,13 @@
       </div>
 
       <div class="recovery-panel" id="recovery-panel" hidden>
-        <p class="hint">Enter your 5 recovery keys. These were generated once, in Settings, when recovery was enabled for this identity.</p>
+        <p class="hint">Enter any 3 of your 5 recovery keys — real Shamir secret shares of your identity's actual private key, generated once in Settings when recovery was enabled. Any 3 reconstruct it; fewer than 3 reveal nothing.</p>
         <div class="recovery-keys-input-grid">
-          <div class="field"><label for="recover-key-1">Key 1</label><input type="text" id="recover-key-1"></div>
-          <div class="field"><label for="recover-key-2">Key 2</label><input type="text" id="recover-key-2"></div>
-          <div class="field"><label for="recover-key-3">Key 3</label><input type="text" id="recover-key-3"></div>
-          <div class="field"><label for="recover-key-4">Key 4</label><input type="text" id="recover-key-4"></div>
-          <div class="field"><label for="recover-key-5">Key 5</label><input type="text" id="recover-key-5"></div>
+          <div class="field"><label for="recover-key-1">Key 1</label><textarea id="recover-key-1" rows="2" placeholder="ATLAS-RK-…"></textarea></div>
+          <div class="field"><label for="recover-key-2">Key 2</label><textarea id="recover-key-2" rows="2" placeholder="ATLAS-RK-…"></textarea></div>
+          <div class="field"><label for="recover-key-3">Key 3</label><textarea id="recover-key-3" rows="2" placeholder="ATLAS-RK-…"></textarea></div>
+          <div class="field"><label for="recover-key-4">Key 4 (optional)</label><textarea id="recover-key-4" rows="2" placeholder="ATLAS-RK-…"></textarea></div>
+          <div class="field"><label for="recover-key-5">Key 5 (optional)</label><textarea id="recover-key-5" rows="2" placeholder="ATLAS-RK-…"></textarea></div>
         </div>
         <p class="hint">If recovery was never enabled, there are no keys and this identity cannot be restored. That is by design.</p>
         <p class="form-error" id="recover-error" hidden></p>
@@ -100,7 +100,7 @@
       <div class="connect-actions">
         <button class="secondary" id="connect-bank" type="button">Connect a bank</button>
         <button class="secondary" id="connect-wallet" type="button">Connect a wallet</button>
-        <button class="secondary" id="connect-card" type="button">Connect a card</button>
+        <button class="secondary" id="connect-card" type="button" disabled title="Card connections need Stripe configured on the backend, so real PCI-compliant tokenization exists to capture a card without Atlas ever touching the raw number. Not faked with a text field in the meantime.">Connect a card (coming soon)</button>
         <button class="secondary" id="trust-btn-ob" type="button">Trust?</button>
       </div>
 
@@ -109,17 +109,9 @@
           <label for="ob-input-bank-name">Bank name</label>
           <input type="text" id="ob-input-bank-name" placeholder="e.g. Monzo">
         </div>
-        <div class="field" id="ob-field-bank-balance" hidden>
-          <label for="ob-input-bank-balance">Balance (GBP)</label>
-          <input type="number" id="ob-input-bank-balance" min="0" step="1" placeholder="1000">
-        </div>
         <div class="field" id="ob-field-wallet" hidden>
           <label for="ob-input-wallet">Wallet address</label>
           <input type="text" id="ob-input-wallet" placeholder="0x...">
-        </div>
-        <div class="field" id="ob-field-card" hidden>
-          <label for="ob-input-card">Card label</label>
-          <input type="text" id="ob-input-card" placeholder="Visa •••• 4471">
         </div>
         <p class="hint">By adding this source, you authorize Atlas to move funds from it using the permission-scoped methods described under Trust. This records your consent at this moment. It does not remove any fraud protections you're entitled to if this source is ever used without your authorization.</p>
         <p class="form-error" id="ob-connect-error" hidden></p>
@@ -170,7 +162,10 @@
       </details>
 
       <div class="stat-row">
-        <div class="stat"><span class="label">Total value</span><span class="value" id="stat-total">£0.00</span></div>
+        <div class="stat">
+          <span class="label">Total value <select id="display-currency" class="currency-select" aria-label="Display currency"><option value="GBP">GBP</option><option value="USD">USD</option></select></span>
+          <span class="value" id="stat-total">£0.00</span>
+        </div>
         <div class="stat"><span class="label">Connected sources</span><span class="value" id="stat-sources">0</span></div>
         <div class="stat"><span class="label">Holdings</span><span class="value" id="stat-holdings">0</span></div>
       </div>
@@ -181,7 +176,7 @@
       <div class="connect-actions">
         <button class="secondary" id="connect-bank-2" type="button">Connect a bank</button>
         <button class="secondary" id="connect-wallet-2" type="button">Connect a wallet</button>
-        <button class="secondary" id="connect-card-2" type="button">Connect a card</button>
+        <button class="secondary" id="connect-card-2" type="button" disabled title="Card connections need Stripe configured on the backend, so real PCI-compliant tokenization exists to capture a card without Atlas ever touching the raw number. Not faked with a text field in the meantime.">Connect a card (coming soon)</button>
         <button class="secondary" id="trust-btn-app" type="button">Trust?</button>
       </div>
 
@@ -190,17 +185,9 @@
           <label for="main-input-bank-name">Bank name</label>
           <input type="text" id="main-input-bank-name" placeholder="e.g. Monzo">
         </div>
-        <div class="field" id="main-field-bank-balance" hidden>
-          <label for="main-input-bank-balance">Balance (GBP)</label>
-          <input type="number" id="main-input-bank-balance" min="0" step="1" placeholder="1000">
-        </div>
         <div class="field" id="main-field-wallet" hidden>
           <label for="main-input-wallet">Wallet address</label>
           <input type="text" id="main-input-wallet" placeholder="0x...">
-        </div>
-        <div class="field" id="main-field-card" hidden>
-          <label for="main-input-card">Card label</label>
-          <input type="text" id="main-input-card" placeholder="Visa •••• 4471">
         </div>
         <p class="hint">By adding this source, you authorize Atlas to move funds from it using the permission-scoped methods described under Trust. This records your consent at this moment. It does not remove any fraud protections you're entitled to if this source is ever used without your authorization.</p>
         <p class="form-error" id="main-connect-error" hidden></p>
@@ -287,8 +274,13 @@
 
       <div id="recovery-keys-block" class="recovery-keys-block" hidden>
         <p class="sources-label">Your recovery keys</p>
-        <p class="hint">Keep these somewhere only you control. Anyone who holds all 5 can recover this identity.</p>
+        <p class="hint">Real Shamir secret shares of your identity's actual private key (3-of-5 threshold) — keep these somewhere only you control. Any 3 reconstruct this identity; fewer than 3 reveal nothing about it.</p>
         <div class="recovery-keys-grid" id="recovery-keys-grid"></div>
+      </div>
+
+      <div id="recovery-regen-note" class="recovery-keys-block" hidden>
+        <p class="hint">Recovery is on for this identity, but this device only knows the recovery keys that were typed in to restore it — not necessarily all 5 originals. You can generate a fresh set of 5 instead.</p>
+        <button class="secondary" id="recovery-regen-btn" type="button">Generate new recovery keys</button>
       </div>
     </section>
 
@@ -309,17 +301,17 @@
   </div>
   <div class="wrap trust-body">
     <p class="eyebrow">Security</p>
-    <h1>Nothing can be stolen because nothing exists to steal.</h1>
-    <p class="lede">When you connect a bank, wallet, or card, Atlas never stores the account number, the sort code, or a copy of your credentials. The connection is compressed into a single cryptographic attestation, bound permanently to your identity's keypair.</p>
+    <h1>No password exists to steal, because none exists at all.</h1>
+    <p class="lede">When you connect a bank or wallet, Atlas never sees or stores the account number, the sort code, or a private key belonging to a wallet you don't control from here. Card connections are switched off for now rather than faked — see below.</p>
 
     <ul class="trust-list">
-      <li><span class="row-tag">01</span><span>Your identity is a keypair you generate and hold. Atlas never sees the private key.</span></li>
-      <li><span class="row-tag">02</span><span>Each source you connect becomes a signed attestation, not a stored copy of your credentials.</span></li>
-      <li><span class="row-tag">03</span><span>Every attestation can be revoked instantly and independently, without touching the others.</span></li>
-      <li><span class="row-tag">04</span><span>Everything stored on this device, identity, sources, activity, is encrypted with AES-256-GCM under a key generated and held on this device. No password to create or remember, and nothing sits on disk as plain, readable text.</span></li>
+      <li><span class="row-tag">01</span><span>Your identity is a real Ed25519 keypair, generated in this browser. The private key never leaves this device — every request to Atlas is signed locally and verified server-side; nothing is ever transmitted that could let Atlas (or anyone intercepting traffic) reconstruct it.</span></li>
+      <li><span class="row-tag">02</span><span>A connected source is not itself a cryptographic object — it's a label and an opaque reference tied to your identity in Atlas's database. What's cryptographically real is that connecting one, granting it permission, and spending against it all require a signature only your private key can produce, checked against your public key on every request.</span></li>
+      <li><span class="row-tag">03</span><span>Every connected source and every permission grant can be revoked independently, for real — a live call to Atlas's server, not a local-only toggle. The server also checks that a request to read or revoke something belongs to the identity that signed the request, not just any registered identity.</span></li>
+      <li><span class="row-tag">04</span><span>Your private key and recovery shares, if you enable them, are encrypted at rest on this device with AES-256-GCM under a key generated and held here — never transmitted, never sent to Atlas. That's different from Atlas's own server storage: see Anonymity for the honest boundary there.</span></li>
     </ul>
 
-    <p>There is no central account database to breach and no password to phish, because neither exists inside the protocol. There is only a signed proof: verifiable by anyone, forgeable by no one.</p>
+    <p>There is a real database behind Atlas — a shared ledger needs somewhere to live for bank-funded conversions and balances to work at all, and it deliberately holds as little as that requires: identities (public keys only, no name attached), funding-source labels and opaque references, permission grants, and ledger entries. No password exists anywhere in the protocol to phish, because every sensitive action is a verified signature instead.</p>
 
     <p class="trust-more"><button class="footer-link" id="trust-anonymity-link" type="button">Anonymity →</button></p>
   </div>
@@ -342,25 +334,31 @@
 
     <p class="sources-label">Already anonymous</p>
     <ul class="trust-list">
-      <li><span>No name, email, or address is required to generate an identity.</span></li>
-      <li><span>No central account database links your identity to a person.</span></li>
-      <li><span>An attestation reveals only what a connected source itself requires, never more.</span></li>
+      <li><span>No name, email, or address is required to generate an identity — registration proves you hold a private key, nothing about who you are.</span></li>
+      <li><span>Your private key never leaves this device, in any form — not at generation, not when signing a request, not if you enable recovery (which splits it into secret shares, not the key itself).</span></li>
+      <li><span>A connected source reveals only a display label and an opaque reference — never a real account number, sort code, or (once card connections exist) a raw card number.</span></li>
       <li><span>Recovery is off unless you turn it on yourself, in Settings.</span></li>
     </ul>
 
     <p class="sources-label">The last 1%</p>
-    <p>A few things currently keep this under 100%.</p>
+    <p>A few things currently keep this under 100%, stated as plainly as we can manage.</p>
 
-    <p><strong>Optional recovery.</strong> Off by default. If you enable it, 5 recovery keys are generated on your device, once, and they become the only way back into that identity. Choosing this trades a sliver of the purest anonymous state, one with no recovery path at all, for the ability to get back in if you lose access. It can be turned on. It can never be turned off.</p>
+    <p><strong>A real server-side database exists.</strong> Bank-funded conversion and a balance you can check from any session both require a shared ledger — that can't live only on your device the way the old fully-local prototype did. What it holds is deliberately narrow (your public key, connected-source labels and opaque references, permission grants, ledger entries) and what it never holds is your private key, a password, or raw account/card data. This is a real trade-off, not a hidden one: a purely local wallet can't fund itself from a bank at all.</p>
 
-    <p><strong>Hosting infrastructure.</strong> Running a service on the internet means a request still has to reach a server somewhere, and that layer sees the same ordinary connection data any web host sees. It never sees what happens after: every identity, source, and activity record is AES-256-GCM encrypted before it ever touches storage, under a key generated and held on your device alone. It's never transmitted anywhere, so nothing outside this device, including us, can decrypt what's stored here.</p>
+    <p><strong>Optional recovery.</strong> Off by default. If you enable it, your private key is split into 5 real Shamir secret shares on your device — any 3 reconstruct it, fewer than 3 reveal nothing about it mathematically, not just practically. Choosing this trades a sliver of the purest anonymous state, one with no recovery path at all, for the ability to get back in if you lose access. It can be turned on. It can never be turned off.</p>
 
-    <p><strong>Local device access.</strong> The encryption key lives on your device so there's no password to create or remember. That protects your data if it's ever copied or intercepted somewhere else, but not from someone holding this device itself, open and unlocked. No app can fix that. Securing the device is on you.</p>
+    <p><strong>Hosting infrastructure.</strong> Running a service on the internet means a request still has to reach a server somewhere, and that layer sees the same ordinary connection data any web host sees (IP address, timing) on top of whatever the request itself carries — which, for Atlas, is never your private key and never a password, only a signature that proves you hold one.</p>
 
-    <p>We are working toward being the first 100% anonymous financial system: no optional trade-off left to make, and nothing seen at the infrastructure layer beyond the bare minimum a connection requires.</p>
+    <p><strong>Card connections are switched off.</strong> Not faked with a text field standing in for real capture — genuinely disabled until PCI-compliant tokenization (Stripe) is configured on the backend, so a card number is never something Atlas's own servers see even in transit.</p>
+
+    <p><strong>Local device access.</strong> Your private key and recovery shares are encrypted at rest on this device under a key generated and held here, so there's no password to create or remember. That protects your data if it's ever copied or intercepted somewhere else, but not from someone holding this device itself, open and unlocked. No app can fix that. Securing the device is on you.</p>
+
+    <p>We are working toward the smallest server-side footprint a real shared ledger can have: nothing collected beyond what bank-funded conversion structurally requires, and no trade-off left unstated.</p>
   </div>
 </div>
 
+<script src="shamir.js"></script>
+<script src="api.js"></script>
 <script src="script.js"></script>
 </body>
 </html>
