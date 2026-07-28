@@ -732,6 +732,10 @@ ul.sources li, ul.activity-list li {
 .activity-list .row-value { color: var(--text-tertiary); }
 
 .connect-actions button.secondary { font-size: 0.75rem; }
+.connect-actions button.secondary[aria-pressed="true"] {
+  background: var(--text);
+  color: var(--bg);
+}
 
 /* ---- convert ---- */
 

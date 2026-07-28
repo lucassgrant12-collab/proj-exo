@@ -221,6 +221,9 @@
   function purchase(session, args) {
     return signedRequest(session, "POST", "/settlements/card-crypto-purchase", args);
   }
+  function convertCryptoToFiat(session, args) {
+    return signedRequest(session, "POST", "/settlements/crypto-fiat-conversion", args);
+  }
   function releaseSettlement(session, id) {
     return signedRequest(session, "POST", "/settlements/" + id + "/release");
   }
@@ -261,6 +264,7 @@
     createGrant: createGrant,
     revokeGrant: revokeGrant,
     purchase: purchase,
+    convertCryptoToFiat: convertCryptoToFiat,
     releaseSettlement: releaseSettlement,
     reverseSettlement: reverseSettlement,
     getBalance: getBalance,

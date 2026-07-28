@@ -43,7 +43,10 @@ export type LedgerTransactionKind =
   | "MERCHANT_SPEND"
   | "CHARGEBACK_REVERSAL"
   | "HOLD_UNWIND"
-  | "WITHDRAWAL";
+  | "WITHDRAWAL"
+  | "POSITION_DEALLOCATION"
+  | "LIQUIDITY_SALE"
+  | "FIAT_CREDITED";
 
 export interface DraftLedgerTransaction {
   kind: LedgerTransactionKind;
@@ -149,6 +152,79 @@ export function positionAllocation(args: {
     lines: [
       { account: { ownerType: "IDENTITY", ownerId: args.identityId, asset: args.amount.asset }, amount: args.amount },
       { account: { ownerType: "ATLAS_CUSTODY_POOL", ownerId: null, asset: args.amount.asset }, amount: args.amount.negate() },
+    ],
+  };
+}
+
+/**
+ * The reverse of positionAllocation: moves a position out of a specific
+ * identity's claim account and back into the pooled custody account, ready
+ * to be sold. This is Convert's crypto->fiat direction, step 1 of 3 (see
+ * services/settlementService.ts's executeCryptoToFiatConversion) — mirrors
+ * positionAllocation exactly, entries flipped.
+ */
+export function positionDeallocation(args: {
+  identityId: string;
+  amount: Money; // positive — deducted from the identity, added to the pool
+  settlementRecordId?: string;
+}): DraftLedgerTransaction {
+  return {
+    kind: "POSITION_DEALLOCATION",
+    memo: `Position deallocated from identity ${args.identityId}`,
+    ...(args.settlementRecordId ? { settlementRecordId: args.settlementRecordId } : {}),
+    lines: [
+      { account: { ownerType: "IDENTITY", ownerId: args.identityId, asset: args.amount.asset }, amount: args.amount.negate() },
+      { account: { ownerType: "ATLAS_CUSTODY_POOL", ownerId: null, asset: args.amount.asset }, amount: args.amount },
+    ],
+  };
+}
+
+/** The reverse of liquidityPurchase: Atlas sells pooled crypto to a
+ * liquidity partner and the fiat proceeds land in Atlas's own operating
+ * account (not yet the identity's — see fiatCredited for that next step).
+ * Step 2 of 3 for Convert's crypto->fiat direction. */
+export function liquiditySale(args: {
+  cryptoSold: Money; // positive, e.g. BTC
+  fiatReceived: Money; // positive, e.g. GBP
+  settlementRecordId?: string;
+}): DraftLedgerTransaction {
+  return {
+    kind: "LIQUIDITY_SALE",
+    memo: `Liquidity sale for settlement ${args.settlementRecordId ?? "n/a"}`,
+    ...(args.settlementRecordId ? { settlementRecordId: args.settlementRecordId } : {}),
+    lines: [
+      { account: { ownerType: "ATLAS_CUSTODY_POOL", ownerId: null, asset: args.cryptoSold.asset }, amount: args.cryptoSold.negate() },
+      { account: { ownerType: "EXTERNAL_LIQUIDITY", ownerId: null, asset: args.cryptoSold.asset }, amount: args.cryptoSold },
+      { account: { ownerType: "EXTERNAL_LIQUIDITY", ownerId: null, asset: args.fiatReceived.asset }, amount: args.fiatReceived.negate() },
+      { account: { ownerType: "ATLAS_OPERATING", ownerId: null, asset: args.fiatReceived.asset }, amount: args.fiatReceived },
+    ],
+  };
+}
+
+/**
+ * Credits the fiat sale proceeds to the identity's own fiat position —
+ * deliberately staying inside Atlas rather than paying out to an external
+ * bank/card. That's the concrete difference between "Atlas integrates fiat
+ * and crypto into one balance" and "Atlas is an exchange that settles
+ * trades to the outside world": there is no real payout rail built (the
+ * same missing-infrastructure gap as bank funding — see
+ * adapters/funding/stub.ts), so rather than fake one, converting crypto
+ * back to fiat just leaves you holding a real, ledger-tracked GBP/USD
+ * position inside Atlas, exactly the way converting fiat to crypto leaves
+ * you holding a crypto position. Step 3 of 3.
+ */
+export function fiatCredited(args: {
+  identityId: string;
+  amount: Money; // positive, fiat
+  settlementRecordId?: string;
+}): DraftLedgerTransaction {
+  return {
+    kind: "FIAT_CREDITED",
+    memo: `Fiat credited to identity ${args.identityId}`,
+    ...(args.settlementRecordId ? { settlementRecordId: args.settlementRecordId } : {}),
+    lines: [
+      { account: { ownerType: "ATLAS_OPERATING", ownerId: null, asset: args.amount.asset }, amount: args.amount.negate() },
+      { account: { ownerType: "IDENTITY", ownerId: args.identityId, asset: args.amount.asset }, amount: args.amount },
     ],
   };
 }

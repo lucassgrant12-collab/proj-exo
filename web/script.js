@@ -12,6 +12,7 @@
   // AtlasAPI.getRate(), a live call to the backend.
   var ASSET_DECIMALS = { GBP: 2, USD: 2, BTC: 8, ETH: 18, USDC: 6 };
   var CRYPTO_ASSETS = ["BTC", "ETH", "USDC"];
+  var FIAT_ASSETS = ["GBP", "USD"];
 
   function minorToDecimalString(minorUnitsStr, decimals) {
     var negative = minorUnitsStr.charAt(0) === "-";
@@ -194,20 +195,38 @@
 
   /* ---------------- holdings (real balances, fetched live) ---------------- */
 
-  async function renderHoldings() {
+  // Fetched once per refresh and reused by renderHoldings, renderTotalValue,
+  // and the Convert tab's reverse direction — one real round trip per asset
+  // instead of the same balance being re-fetched by every consumer of it.
+  var balancesCache = {}; // asset -> decimal string, e.g. { BTC: "0.00098039" }
+
+  async function refreshBalances() {
+    var assets = CRYPTO_ASSETS.concat(FIAT_ASSETS);
+    for (var i = 0; i < assets.length; i++) {
+      var res = await AtlasAPI.getBalance(session, assets[i]);
+      balancesCache[assets[i]] = res.balance;
+    }
+    return balancesCache;
+  }
+
+  function heldCryptoAssets() {
+    return CRYPTO_ASSETS.filter(function (a) { return parseFloat(balancesCache[a] || "0") > 0; });
+  }
+
+  function renderHoldings() {
     var el = document.getElementById("holdings-list");
     var empty = document.getElementById("holdings-empty");
-    if (!el) return;
+    if (!el) return 0;
     var rows = [];
-    for (var i = 0; i < CRYPTO_ASSETS.length; i++) {
-      var asset = CRYPTO_ASSETS[i];
-      var res = await AtlasAPI.getBalance(session, asset);
-      if (parseFloat(res.balance) > 0) {
-        rows.push('<li><span class="row-main"><span class="row-tag">POSITION</span>' +
-          '<span class="row-name">' + asset + "</span></span>" +
-          '<span class="row-value">' + formatCrypto(asset, res.balance) + " " + asset + "</span></li>");
-      }
-    }
+    CRYPTO_ASSETS.concat(FIAT_ASSETS).forEach(function (asset) {
+      var bal = balancesCache[asset];
+      if (!bal || parseFloat(bal) <= 0) return;
+      var isFiat = FIAT_ASSETS.indexOf(asset) !== -1;
+      var valueText = isFiat ? formatFiat(parseFloat(bal), asset) : formatCrypto(asset, bal) + " " + asset;
+      rows.push('<li><span class="row-main"><span class="row-tag">POSITION</span>' +
+        '<span class="row-name">' + asset + "</span></span>" +
+        '<span class="row-value">' + valueText + "</span></li>");
+    });
     el.innerHTML = rows.join("");
     if (empty) empty.hidden = rows.length > 0;
     return rows.length;
@@ -229,10 +248,16 @@
     if (!statTotal) return;
     statTotal.textContent = "…";
     var total = 0;
+    // Fiat balances only add directly to the total when they're already in
+    // the selected display currency — there's no real GBP<->USD rate wired
+    // up (the rate endpoint is fiat<->crypto only), so a fiat position held
+    // in the other currency stays visible in Holdings but isn't silently
+    // folded into this figure without a real exchange rate behind it.
+    var fiatHeld = parseFloat(balancesCache[state.displayCurrency] || "0");
+    if (fiatHeld > 0) total += fiatHeld;
     for (var i = 0; i < CRYPTO_ASSETS.length; i++) {
       var asset = CRYPTO_ASSETS[i];
-      var balRes = await AtlasAPI.getBalance(session, asset);
-      var amt = parseFloat(balRes.balance);
+      var amt = parseFloat(balancesCache[asset] || "0");
       if (amt > 0) {
         var rateRes = await AtlasAPI.getRate(asset, state.displayCurrency);
         total += amt * rateRes.rate;
@@ -494,12 +519,12 @@
   /* ---------------- app shell / tabs ---------------- */
 
   document.querySelectorAll(".nav-btn").forEach(function (btn) {
-    btn.addEventListener("click", function () {
+    btn.addEventListener("click", async function () {
       document.querySelectorAll(".nav-btn").forEach(function (b) { b.classList.toggle("is-active", b === btn); });
       document.querySelectorAll(".tab-panel").forEach(function (p) {
         p.classList.toggle("is-active", p.dataset.tab === btn.dataset.tab);
       });
-      if (btn.dataset.tab === "convert") renderConvertForm();
+      if (btn.dataset.tab === "convert") await renderConvertForm();
     });
   });
 
@@ -621,7 +646,12 @@
   document.getElementById("trust-anonymity-link").addEventListener("click", function () { openAnonymity(true); });
   document.getElementById("anonymity-back").addEventListener("click", closeAnonymity);
 
-  /* ---------------- convert (real grant + real settlement) ---------------- */
+  /* ---------------- convert (real grant + real settlement, both directions) ----------------
+   * "Fiat -> Crypto" and "Crypto -> Fiat" are two directions of the same
+   * idea: your Atlas balance is one thing, representable as fiat or crypto.
+   * Neither direction pays out externally or holds cash on your behalf the
+   * way a broker would — see fiatCredited's doc comment in the backend for
+   * why that specific choice was deliberate. */
 
   var convertFromSelect = document.getElementById("convert-from");
   var convertToSelect = document.getElementById("convert-to");
@@ -630,35 +660,98 @@
   var convertError = document.getElementById("convert-error");
   var convertForm = document.getElementById("convert-form");
   var convertEmpty = document.getElementById("convert-empty");
+  var convertEmptyText = document.getElementById("convert-empty-text");
   var convertPanel = document.getElementById("convert-panel");
+  var convertHeading = document.getElementById("convert-heading");
+  var convertFromLabel = document.getElementById("convert-from-label");
+  var convertToLabel = document.getElementById("convert-to-label");
+  var convertAmountLabel = document.getElementById("convert-amount-label");
+  var convertDirForward = document.getElementById("convert-direction-forward");
+  var convertDirReverse = document.getElementById("convert-direction-reverse");
 
+  var CRYPTO_OPTIONS_HTML = CRYPTO_ASSETS.map(function (a) {
+    var names = { BTC: "Bitcoin", ETH: "Ethereum", USDC: "USD Coin" };
+    return '<option value="' + a + '">' + names[a] + " (" + a + ")</option>";
+  }).join("");
+  var FIAT_OPTIONS_HTML = FIAT_ASSETS.map(function (a) {
+    return '<option value="' + a + '">' + a + "</option>";
+  }).join("");
+
+  var convertDirection = "forward"; // "forward" (fiat->crypto) | "reverse" (crypto->fiat)
   var rateCache = null; // { asset, rate }
 
-  function renderConvertForm() {
-    var banks = sourcesCache.filter(function (s) { return s.kind === "BANK" && s.status === "ACTIVE"; });
-    convertEmpty.hidden = banks.length > 0;
-    if (convertPanel.hidden) {
-      convertForm.hidden = banks.length === 0;
+  function setConvertDirection(dir) {
+    convertDirection = dir;
+    convertDirForward.setAttribute("aria-pressed", String(dir === "forward"));
+    convertDirReverse.setAttribute("aria-pressed", String(dir === "reverse"));
+    rateCache = null;
+    renderConvertForm();
+  }
+  convertDirForward.addEventListener("click", function () { setConvertDirection("forward"); });
+  convertDirReverse.addEventListener("click", function () { setConvertDirection("reverse"); });
+
+  async function renderConvertForm() {
+    if (convertDirection === "reverse") await refreshBalances();
+
+    if (convertDirection === "forward") {
+      convertHeading.textContent = "Convert a bank balance into a position.";
+      convertFromLabel.textContent = "From";
+      convertToLabel.textContent = "To";
+      convertAmountLabel.textContent = "Amount (GBP)";
+      convertEmptyText.textContent = "Connect a bank first to convert a balance.";
+
+      var banks = sourcesCache.filter(function (s) { return s.kind === "BANK" && s.status === "ACTIVE"; });
+      convertEmpty.hidden = banks.length > 0;
+      if (convertPanel.hidden) convertForm.hidden = banks.length === 0;
+      convertFromSelect.innerHTML = banks.map(function (b) {
+        return '<option value="' + b.id + '">' + b.label + "</option>";
+      }).join("");
+      convertToSelect.innerHTML = CRYPTO_OPTIONS_HTML;
+    } else {
+      convertHeading.textContent = "Convert a position back into a fiat balance.";
+      convertFromLabel.textContent = "From";
+      convertToLabel.textContent = "To";
+      convertAmountLabel.textContent = "Amount (" + (convertFromSelect.value || "crypto") + ")";
+      convertEmptyText.textContent = "Convert a fiat balance into crypto first — there's nothing to convert back yet.";
+
+      var held = heldCryptoAssets();
+      convertEmpty.hidden = held.length > 0;
+      if (convertPanel.hidden) convertForm.hidden = held.length === 0;
+      convertFromSelect.innerHTML = held.map(function (a) {
+        return '<option value="' + a + '">' + a + " · " + formatCrypto(a, balancesCache[a]) + "</option>";
+      }).join("");
+      convertToSelect.innerHTML = FIAT_OPTIONS_HTML;
+      convertAmountLabel.textContent = "Amount (" + (convertFromSelect.value || "crypto") + ")";
     }
-    convertFromSelect.innerHTML = banks.map(function (b) {
-      return '<option value="' + b.id + '">' + b.label + "</option>";
-    }).join("");
+    updateEstimate();
   }
 
+  convertFromSelect.addEventListener("change", function () {
+    if (convertDirection === "reverse") convertAmountLabel.textContent = "Amount (" + convertFromSelect.value + ")";
+    rateCache = null;
+    updateEstimate();
+  });
+
   async function fetchRateIfNeeded() {
-    var asset = convertToSelect.value;
-    if (rateCache && rateCache.asset === asset) return rateCache;
-    var res = await AtlasAPI.getRate(asset, "GBP");
-    rateCache = { asset: asset, rate: res.rate };
+    var cryptoAsset = convertDirection === "forward" ? convertToSelect.value : convertFromSelect.value;
+    var fiatAsset = convertDirection === "forward" ? "GBP" : (convertToSelect.value || "GBP");
+    if (rateCache && rateCache.asset === cryptoAsset && rateCache.fiat === fiatAsset) return rateCache;
+    var res = await AtlasAPI.getRate(cryptoAsset, fiatAsset);
+    rateCache = { asset: cryptoAsset, fiat: fiatAsset, rate: res.rate };
     return rateCache;
   }
 
   async function updateEstimate() {
     var amt = parseFloat(convertAmount.value) || 0;
     if (amt <= 0) { convertEstimate.textContent = "Enter an amount to see the estimate."; return; }
+    if (convertDirection === "reverse" && !convertFromSelect.value) { convertEstimate.textContent = "Nothing to convert yet."; return; }
     try {
       var rate = await fetchRateIfNeeded();
-      convertEstimate.textContent = "≈ " + (amt / rate.rate).toFixed(8) + " " + rate.asset + " at " + formatGBP(rate.rate) + "/" + rate.asset + " (live from the backend, illustrative rate)";
+      if (convertDirection === "forward") {
+        convertEstimate.textContent = "≈ " + (amt / rate.rate).toFixed(8) + " " + rate.asset + " at " + formatGBP(rate.rate) + "/" + rate.asset + " (live from the backend, illustrative rate)";
+      } else {
+        convertEstimate.textContent = "≈ " + formatFiat(amt * rate.rate, rate.fiat) + " at " + formatFiat(rate.rate, rate.fiat) + "/" + rate.asset + " (live from the backend, illustrative rate)";
+      }
     } catch (err) {
       convertEstimate.textContent = "Could not fetch a rate: " + err.message;
     }
@@ -675,45 +768,58 @@
   convertForm.addEventListener("submit", async function (e) {
     e.preventDefault();
     convertError.hidden = true;
-    var source = sourcesCache.find(function (s) { return s.id === convertFromSelect.value; });
     var amount = parseFloat(convertAmount.value);
-    var asset = convertToSelect.value;
-
-    if (!source) { showConvertError("Connect a bank first."); return; }
     if (!amount || amount <= 0) { showConvertError("Enter an amount greater than zero."); return; }
 
     convertForm.hidden = true;
     convertPanel.hidden = false;
     document.getElementById("convert-success").hidden = true;
-
     var log = makeLiveLog(document.getElementById("convert-log"));
-    var amountDecimal = amount.toFixed(2);
-    try {
-      log.line("Creating a single-use permission grant for £" + amountDecimal + "…");
-      var grant = await AtlasAPI.createGrant(session, {
-        fundingSourceId: source.id,
-        limitAsset: "GBP",
-        limitDecimal: amountDecimal,
-        windowSeconds: 3600,
-        singleUse: true,
-      });
-      log.line("Executing settlement…");
-      var result = await AtlasAPI.purchase(session, {
-        grantId: grant.id,
-        fiatAsset: "GBP",
-        fiatDecimal: amountDecimal,
-        cryptoAsset: asset,
-      });
-      var allocatedDecimal = minorToDecimalString(result.cryptoAllocated.minorUnits, ASSET_DECIMALS[asset]);
-      log.line("Settled.");
-      pushActivity("Converted £" + amountDecimal + " to " + formatCrypto(asset, allocatedDecimal) + " " + asset);
-      document.getElementById("convert-success-text").textContent =
-        "Converted £" + amountDecimal + " to " + formatCrypto(asset, allocatedDecimal) + " " + asset + ".";
-      document.getElementById("convert-success").hidden = false;
-      await renderHoldings();
-      await renderTotalValue();
-    } catch (err) {
-      log.line("Failed: " + err.message, true);
+
+    if (convertDirection === "forward") {
+      var source = sourcesCache.find(function (s) { return s.id === convertFromSelect.value; });
+      var asset = convertToSelect.value;
+      if (!source) { convertForm.hidden = false; convertPanel.hidden = true; showConvertError("Connect a bank first."); return; }
+      var amountDecimal = amount.toFixed(2);
+      try {
+        log.line("Creating a single-use permission grant for £" + amountDecimal + "…");
+        var grant = await AtlasAPI.createGrant(session, {
+          fundingSourceId: source.id, limitAsset: "GBP", limitDecimal: amountDecimal, windowSeconds: 3600, singleUse: true,
+        });
+        log.line("Executing settlement…");
+        var result = await AtlasAPI.purchase(session, { grantId: grant.id, fiatAsset: "GBP", fiatDecimal: amountDecimal, cryptoAsset: asset });
+        var allocatedDecimal = minorToDecimalString(result.cryptoAllocated.minorUnits, ASSET_DECIMALS[asset]);
+        log.line("Settled.");
+        pushActivity("Converted £" + amountDecimal + " to " + formatCrypto(asset, allocatedDecimal) + " " + asset);
+        document.getElementById("convert-success-text").textContent =
+          "Converted £" + amountDecimal + " to " + formatCrypto(asset, allocatedDecimal) + " " + asset + ".";
+        document.getElementById("convert-success").hidden = false;
+        await refreshBalances();
+        renderHoldings();
+        await renderTotalValue();
+      } catch (err) {
+        log.line("Failed: " + err.message, true);
+      }
+    } else {
+      var cryptoAsset = convertFromSelect.value;
+      var fiatAsset = convertToSelect.value;
+      if (!cryptoAsset) { convertForm.hidden = false; convertPanel.hidden = true; showConvertError("Nothing to convert."); return; }
+      var cryptoDecimal = amount.toFixed(8);
+      try {
+        log.line("Converting " + cryptoDecimal + " " + cryptoAsset + " back to " + fiatAsset + "…");
+        var conv = await AtlasAPI.convertCryptoToFiat(session, { cryptoAsset: cryptoAsset, cryptoDecimal: cryptoDecimal, fiatAsset: fiatAsset });
+        var fiatDecimal = minorToDecimalString(conv.fiatReceived.minorUnits, ASSET_DECIMALS[fiatAsset]);
+        log.line("Converted.");
+        pushActivity("Converted " + cryptoDecimal + " " + cryptoAsset + " to " + formatFiat(parseFloat(fiatDecimal), fiatAsset));
+        document.getElementById("convert-success-text").textContent =
+          "Converted " + cryptoDecimal + " " + cryptoAsset + " to " + formatFiat(parseFloat(fiatDecimal), fiatAsset) + ", held in Atlas.";
+        document.getElementById("convert-success").hidden = false;
+        await refreshBalances();
+        renderHoldings();
+        await renderTotalValue();
+      } catch (err) {
+        log.line("Failed: " + err.message, true);
+      }
     }
   });
 
@@ -722,12 +828,11 @@
     convertError.hidden = false;
   }
 
-  document.getElementById("convert-again").addEventListener("click", function () {
+  document.getElementById("convert-again").addEventListener("click", async function () {
     convertPanel.hidden = true;
     convertForm.hidden = false;
     convertAmount.value = "";
-    updateEstimate();
-    renderConvertForm();
+    await renderConvertForm();
   });
 
   /* ---------------- render all ---------------- */
@@ -747,14 +852,14 @@
     var statSources = document.getElementById("stat-sources");
     if (statSources) statSources.textContent = String(sourcesCache.length);
 
-    var holdingsCount = await renderHoldings();
+    await refreshBalances();
+    var holdingsCount = renderHoldings();
     var statHoldings = document.getElementById("stat-holdings");
     if (statHoldings) statHoldings.textContent = String(holdingsCount);
 
     await renderTotalValue();
     renderActivity();
-    renderConvertForm();
-    updateEstimate();
+    await renderConvertForm();
     renderSettings();
   }
 

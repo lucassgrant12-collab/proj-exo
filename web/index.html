@@ -208,23 +208,28 @@
 
     <section class="tab-panel" data-tab="convert">
       <p class="eyebrow">Instant conversion</p>
-      <h2>Convert a bank balance into a position.</h2>
-      <p>Atlas negotiates the settlement route automatically. Rates shown are simulated.</p>
+      <h2 id="convert-heading">Convert a bank balance into a position.</h2>
+      <p id="convert-subhead">Atlas negotiates the settlement route automatically. Rates shown are simulated. Your balance is one thing, held as fiat or crypto — converting moves between those, it doesn't trade out to an exchange.</p>
+
+      <div class="connect-actions" role="group" aria-label="Conversion direction">
+        <button class="secondary" id="convert-direction-forward" type="button" aria-pressed="true">Fiat → Crypto</button>
+        <button class="secondary" id="convert-direction-reverse" type="button" aria-pressed="false">Crypto → Fiat</button>
+      </div>
 
       <div id="convert-empty" class="empty-state" hidden>
-        <p>Connect a bank first to convert a balance.</p>
+        <p id="convert-empty-text">Connect a bank first to convert a balance.</p>
         <button type="button" id="convert-connect-bank">Connect a bank</button>
       </div>
 
       <form id="convert-form">
         <div class="convert-grid">
           <div class="field">
-            <label for="convert-from">From</label>
+            <label for="convert-from" id="convert-from-label">From</label>
             <select id="convert-from"></select>
           </div>
           <span class="convert-arrow" aria-hidden="true">→</span>
           <div class="field">
-            <label for="convert-to">To</label>
+            <label for="convert-to" id="convert-to-label">To</label>
             <select id="convert-to">
               <option value="BTC">Bitcoin (BTC)</option>
               <option value="ETH">Ethereum (ETH)</option>
@@ -233,8 +238,8 @@
           </div>
         </div>
         <div class="field">
-          <label for="convert-amount">Amount (GBP)</label>
-          <input type="number" id="convert-amount" min="1" step="1" placeholder="100">
+          <label for="convert-amount" id="convert-amount-label">Amount (GBP)</label>
+          <input type="number" id="convert-amount" min="0" step="any" placeholder="100">
         </div>
         <p class="estimate" id="convert-estimate">Enter an amount to see the estimate.</p>
         <p class="form-error" id="convert-error" hidden></p>

@@ -14,6 +14,12 @@ const purchaseBody = z.object({
   cryptoAsset: z.string(),
 });
 
+const conversionBody = z.object({
+  cryptoAsset: z.string(),
+  cryptoDecimal: z.string(),
+  fiatAsset: z.string(),
+});
+
 export function registerSettleRoutes(app: FastifyInstance) {
   const funding = buildFundingAdapters();
   const liquidity = new StubLiquidityAdapter();
@@ -27,6 +33,22 @@ export function registerSettleRoutes(app: FastifyInstance) {
       grantId: body.grantId,
       fiatAmount: Money.fromDecimalString(body.fiatAsset, body.fiatDecimal),
       cryptoAsset: body.cryptoAsset,
+    });
+    reply.code(201).send(serializeBigInts(result));
+  });
+
+  // The reverse of card-crypto-purchase — converts a crypto position you
+  // already hold back into a fiat position, still inside Atlas (no
+  // grantId: you're not authorizing a new external charge, just
+  // reallocating value you already own). See
+  // settlementService.executeCryptoToFiatConversion's doc comment for why
+  // this doesn't pay out to a real bank.
+  app.post("/settlements/crypto-fiat-conversion", async (req, reply) => {
+    const body = conversionBody.parse(req.body);
+    const result = await settlement.executeCryptoToFiatConversion({
+      identityId: req.atlasIdentityId as string,
+      cryptoAmount: Money.fromDecimalString(body.cryptoAsset, body.cryptoDecimal),
+      fiatAsset: body.fiatAsset,
     });
     reply.code(201).send(serializeBigInts(result));
   });

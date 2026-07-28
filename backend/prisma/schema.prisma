@@ -237,6 +237,15 @@ enum LedgerTransactionKind {
   CHARGEBACK_REVERSAL  // a funding charge gets clawed back
   HOLD_UNWIND          // a held position gets reversed before release
   WITHDRAWAL           // identity moves a position out of Atlas
+  // The reverse direction — converting a held crypto position back into a
+  // fiat position, still inside Atlas. Deliberately does NOT pay out to an
+  // external bank/card (see services/settlementService.ts's file comment
+  // on executeCryptoToFiatConversion) — Atlas integrates fiat and crypto
+  // into one balance, it isn't an exchange settling trades out to the
+  // outside world.
+  POSITION_DEALLOCATION // a specific identity's position -> custody pool (mirror of POSITION_ALLOCATION)
+  LIQUIDITY_SALE         // Atlas sells crypto to a liquidity partner for fiat (mirror of LIQUIDITY_PURCHASE)
+  FIAT_CREDITED           // Atlas operating cash -> a specific identity's fiat position
 }
 
 model LedgerTransaction {

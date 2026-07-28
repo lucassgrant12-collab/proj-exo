@@ -17,13 +17,24 @@ import {
   type GrantState,
   type PriorUsage,
 } from "../domain/permissionGrant.js";
-import { chargebackReversal, fundingReceived, holdUnwind, liquidityPurchase, positionAllocation } from "../domain/ledger.js";
+import {
+  chargebackReversal,
+  fiatCredited,
+  fundingReceived,
+  holdUnwind,
+  liquidityPurchase,
+  liquiditySale,
+  positionAllocation,
+  positionDeallocation,
+} from "../domain/ledger.js";
 import { Money } from "../domain/money.js";
 import type { FundingAdapters } from "../adapters/funding/types.js";
 import type { LiquidityAdapter } from "../adapters/liquidity/types.js";
 import { LedgerService } from "./ledgerService.js";
 
 const DEFAULT_HOLD_HOURS = 72; // §10: short enough to stay usable, long enough to catch the fast-fraud pattern
+
+export class InsufficientPositionError extends Error {}
 
 export class SettlementService {
   private readonly ledger: LedgerService;
@@ -142,6 +153,43 @@ export class SettlementService {
     });
 
     return { settlementRecordId: record.id, cryptoAllocated: cryptoBought };
+  }
+
+  /**
+   * The reverse of executeCardFundedCryptoPurchase: converts a crypto
+   * position you already hold back into a fiat position, still inside
+   * Atlas. Deliberately does not touch a funding adapter or pay anything
+   * out externally — see fiatCredited's doc comment for why. No
+   * PermissionGrant is involved either, unlike the funding direction:
+   * you're reallocating value you already own, not authorizing a new
+   * charge against an external source, so there's nothing to scope a grant
+   * against.
+   *
+   * No hold/dispute window either — that exists on the funding side purely
+   * because a card network chargeback can claw back money weeks later
+   * (§10); converting your own already-held position has no equivalent
+   * external actor who could reverse it.
+   */
+  async executeCryptoToFiatConversion(args: {
+    identityId: string;
+    cryptoAmount: Money;
+    fiatAsset: string;
+  }): Promise<{ fiatReceived: Money }> {
+    const balance = await this.ledger.balanceOf(args.identityId, args.cryptoAmount.asset);
+    if (args.cryptoAmount.greaterThan(balance)) {
+      throw new InsufficientPositionError(
+        `Identity ${args.identityId} holds ${balance.toString()}, cannot convert ${args.cryptoAmount.toString()}.`,
+      );
+    }
+
+    await this.ledger.post(positionDeallocation({ identityId: args.identityId, amount: args.cryptoAmount }));
+
+    const { fiatReceived } = await this.liquidity.sell({ cryptoAmount: args.cryptoAmount, fiatAsset: args.fiatAsset });
+
+    await this.ledger.post(liquiditySale({ cryptoSold: args.cryptoAmount, fiatReceived }));
+    await this.ledger.post(fiatCredited({ identityId: args.identityId, amount: fiatReceived }));
+
+    return { fiatReceived };
   }
 
   /** Called once a HELD record's hold window has passed with no dispute —
