@@ -67,6 +67,16 @@ export function registerAuthMiddleware(app: FastifyInstance) {
     // matched, so bailing out here when it's absent lets Fastify's own
     // not-found handling take over as normal.
     if (!req.routeOptions.url) return;
+    // CORS preflight requests are never signed — browsers don't attach
+    // custom headers to them, they're just asking permission before sending
+    // the real request. @fastify/cors auto-registers an OPTIONS handler for
+    // every route to answer that; without this check, this hook ran first
+    // and rejected the preflight itself with 401 (missing signature
+    // headers), which made every real cross-origin POST fail before it was
+    // even sent — the browser reports that as a bare "Failed to fetch",
+    // with no server-side error to point at. Caught by actually testing a
+    // live cross-origin request, not assumed from the code.
+    if (req.method === "OPTIONS") return;
     if (isExempt(req)) return;
 
     const identityId = req.headers["x-atlas-identity"];
