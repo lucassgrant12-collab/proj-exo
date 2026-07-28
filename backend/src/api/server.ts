@@ -26,6 +26,15 @@ export function buildServer() {
 
   app.get("/health", async () => ({ status: "ok" }));
 
+  // This is an API with no visual frontend of its own (see web/ for that) —
+  // this route exists purely so opening the deployed URL in a browser shows
+  // something informative instead of a bare 404.
+  app.get("/", async () => ({
+    service: "atlas-backend",
+    status: "ok",
+    docs: "See README.md in the backend/ directory of the repo.",
+  }));
+
   registerIdentityRoutes(app);
   registerSourceRoutes(app);
   registerSettleRoutes(app);

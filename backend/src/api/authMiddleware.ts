@@ -26,6 +26,7 @@ declare module "fastify" {
 }
 
 const AUTH_EXEMPT_ROUTES: Array<{ method: string; path: string }> = [
+  { method: "GET", path: "/" },
   { method: "GET", path: "/health" },
   { method: "POST", path: "/identities" }, // registration is what proves key possession, not a prerequisite for it
   { method: "POST", path: "/webhooks/stripe" }, // authenticated a different way — see routes/webhooks.ts
@@ -55,6 +56,15 @@ export function registerAuthMiddleware(app: FastifyInstance) {
   });
 
   app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
+    // Fastify still runs global preHandler hooks for requests that never
+    // matched a real route (its default not-found handling goes through the
+    // normal hook chain) — without this check, hitting any nonexistent path
+    // returned a confusing 401 instead of a plain 404, because there was no
+    // registered route for isExempt() to compare against in the first
+    // place. req.routeOptions.url is only set once a real route has
+    // matched, so bailing out here when it's absent lets Fastify's own
+    // not-found handling take over as normal.
+    if (!req.routeOptions.url) return;
     if (isExempt(req)) return;
 
     const identityId = req.headers["x-atlas-identity"];
